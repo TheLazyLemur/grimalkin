@@ -58,9 +58,9 @@ to.
     cache and thinking stay valid). Queuing is TUI-only; steering touches
     the core loop.
 12. **Web search and web fetch.** Today the model can only reach the web
-    through `curl` in the shell, with no search at all. Anthropic offers both
-    as server tools that run on its side; other providers such as Ollama
-    would need tools of grimalkin's own.
+    through `curl` in the shell, with no search at all. Add both as
+    grimalkin's own tools, backed by Ollama's web search and web fetch
+    APIs, so they work the same whichever provider runs the model.
 
 ## Also worth considering
 
