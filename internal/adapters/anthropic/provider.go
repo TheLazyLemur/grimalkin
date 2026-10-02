@@ -132,11 +132,15 @@ func stopReason(r anthropic.StopReason) core.StopReason {
 }
 
 func (p *Provider) buildParams(req core.ModelRequest) anthropic.MessageNewParams {
+	// Two cache breakpoints: the last system block caches tools and system,
+	// which don't change in a session; the top-level one follows the end of
+	// the conversation, so each request reads the previous one's prefix.
 	params := anthropic.MessageNewParams{
-		Model:     anthropic.Model(p.config.Model),
-		MaxTokens: int64(p.config.MaxTokens),
-		System:    []anthropic.TextBlockParam{{Text: req.System}},
-		Thinking:  thinking(p.config.Thinking),
+		Model:        anthropic.Model(p.config.Model),
+		MaxTokens:    int64(p.config.MaxTokens),
+		System:       []anthropic.TextBlockParam{{Text: req.System, CacheControl: anthropic.NewCacheControlEphemeralParam()}},
+		Thinking:     thinking(p.config.Thinking),
+		CacheControl: anthropic.NewCacheControlEphemeralParam(),
 	}
 	if p.config.Tokens != nil {
 		// Must come first: the OAuth path checks for it.

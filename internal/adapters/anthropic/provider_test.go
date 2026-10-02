@@ -40,10 +40,14 @@ const toolUseSSE = "event: message_start\n" +
 	`data: {"type":"message_stop"}` + "\n\n"
 
 type wireRequest struct {
-	System       []struct{ Text string }
+	System []struct {
+		Text         string
+		CacheControl map[string]any `json:"cache_control"`
+	}
 	Tools        []map[string]any
 	Thinking     map[string]any `json:"thinking"`
 	OutputConfig map[string]any `json:"output_config"`
+	CacheControl map[string]any `json:"cache_control"`
 	Messages     []struct {
 		Role    string
 		Content []map[string]any
@@ -86,8 +90,9 @@ func TestAConversationIsEncodedForTheAPIAndAStreamedToolCallDecoded(t *testing.T
 
 	// then
 	// ... the body carries the configured thinking and effort and each message in
-	// ... API form, only the configured key is sent, text streamed out, and the
-	// ... tool call and unsigned thinking came back ready to be sent again
+	// ... API form, tools and system are cached apart from the conversation,
+	// ... only the configured key is sent, text streamed out, and the tool call
+	// ... and unsigned thinking came back ready to be sent again
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,8 +127,11 @@ func TestAConversationIsEncodedForTheAPIAndAStreamedToolCallDecoded(t *testing.T
 	if wire.OutputConfig["effort"] != "high" {
 		t.Errorf("output_config = %+v", wire.OutputConfig)
 	}
-	if wire.System[0].Text != "be brief" {
+	if wire.System[0].Text != "be brief" || wire.System[0].CacheControl["type"] != "ephemeral" {
 		t.Errorf("system = %+v", wire.System)
+	}
+	if wire.CacheControl["type"] != "ephemeral" {
+		t.Errorf("cache_control = %+v", wire.CacheControl)
 	}
 	if streamed.String() != "Listing." {
 		t.Errorf("streamed = %q", streamed.String())
