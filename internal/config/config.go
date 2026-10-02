@@ -20,12 +20,7 @@ import (
 	"unicode"
 )
 
-const (
-	WireAnthropicMessages = "anthropic-messages"
-
-	// AuthClaudeOAuth signs in with a Claude Pro/Max account instead of a key.
-	AuthClaudeOAuth = "claude-oauth"
-)
+const WireAnthropicMessages = "anthropic-messages"
 
 var thinkingValues = []string{"adaptive", "enabled", "disabled"}
 
@@ -35,8 +30,7 @@ type Selection struct {
 	Provider string
 	Wire     string
 	BaseURL  string
-	APIKey   string // empty when Auth is set
-	Auth     string // empty when APIKey is set
+	APIKey   string
 	Model    string
 	Thinking string // empty for wires without a thinking setting
 	Effort   string // empty when the model has no effort levels
@@ -58,7 +52,6 @@ type provider struct {
 	Wire     string           `json:"wire"`
 	BaseURL  string           `json:"baseUrl"`
 	APIKey   string           `json:"apiKey"`
-	Auth     string           `json:"auth"`
 	Thinking string           `json:"thinking"`
 	Efforts  []string         `json:"efforts"` // nil when absent; empty is an error
 	Models   map[string]model `json:"models"`
@@ -148,19 +141,15 @@ func (f file) resolve() (Selection, error) {
 		}
 		effort = f.Effort
 	}
-	key := ""
-	if p.Auth == "" {
-		var err error
-		if key, err = resolveKey(p.APIKey); err != nil {
-			return Selection{}, fmt.Errorf("providers.%s: %w", f.Provider, err)
-		}
+	key, err := resolveKey(p.APIKey)
+	if err != nil {
+		return Selection{}, fmt.Errorf("providers.%s: %w", f.Provider, err)
 	}
 	return Selection{
 		Provider:  f.Provider,
 		Wire:      p.Wire,
 		BaseURL:   p.BaseURL,
 		APIKey:    key,
-		Auth:      p.Auth,
 		Model:     f.Model,
 		Thinking:  thinking,
 		Effort:    effort,
@@ -172,19 +161,11 @@ func (f file) resolve() (Selection, error) {
 // caller can put the provider's path in front.
 func (p provider) validate() error {
 	for _, field := range []struct{ name, value string }{
-		{"wire", p.Wire}, {"baseUrl", p.BaseURL},
+		{"wire", p.Wire}, {"baseUrl", p.BaseURL}, {"apiKey", p.APIKey},
 	} {
 		if field.value == "" {
 			return fmt.Errorf(": missing %q", field.name)
 		}
-	}
-	switch {
-	case p.APIKey == "" && p.Auth == "":
-		return errors.New(`: missing "apiKey" or "auth"`)
-	case p.APIKey != "" && p.Auth != "":
-		return errors.New(`: "apiKey" and "auth" are exclusive`)
-	case p.Auth != "" && p.Auth != AuthClaudeOAuth:
-		return fmt.Errorf(": unknown auth %q", p.Auth)
 	}
 	if p.Models == nil {
 		return errors.New(`: missing "models"`)

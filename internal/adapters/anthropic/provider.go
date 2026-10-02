@@ -17,8 +17,7 @@ const thinkingBudget = 16_000
 
 type Config struct {
 	BaseURL   string
-	APIKey    string       // exactly one of APIKey and Tokens
-	Tokens    *TokenSource // signs in as Claude Code with a Pro/Max account
+	APIKey    string
 	Model     string
 	MaxTokens int
 	Thinking  string // "adaptive", "enabled" or "disabled"
@@ -34,26 +33,18 @@ type Provider struct {
 // (ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, profiles, ...) are switched off so
 // no other credential reaches the configured endpoint.
 func New(config Config) *Provider {
-	if config.BaseURL == "" || config.Model == "" || config.MaxTokens <= 0 {
+	if config.BaseURL == "" || config.APIKey == "" || config.Model == "" || config.MaxTokens <= 0 {
 		panic("provider not configured")
-	}
-	if (config.APIKey == "") == (config.Tokens == nil) {
-		panic("provider needs exactly one of an API key and a token source")
 	}
 	if config.Thinking == "enabled" && config.MaxTokens <= thinkingBudget {
 		panic(fmt.Sprintf("max tokens %d must exceed the thinking budget %d", config.MaxTokens, thinkingBudget))
 	}
 	thinking(config.Thinking) // panics on a value config validation should have rejected
-	opts := []option.RequestOption{
+	client := anthropic.NewClient(
 		option.WithoutEnvironmentDefaults(),
 		option.WithBaseURL(config.BaseURL),
-	}
-	if config.Tokens != nil {
-		opts = append(opts, oauthHeaders()...)
-	} else {
-		opts = append(opts, option.WithAPIKey(config.APIKey))
-	}
-	client := anthropic.NewClient(opts...)
+		option.WithAPIKey(config.APIKey),
+	)
 	return &Provider{client: client, config: config}
 }
 
@@ -70,17 +61,7 @@ func thinking(value string) anthropic.ThinkingConfigParamUnion {
 }
 
 func (p *Provider) Stream(ctx context.Context, req core.ModelRequest, onText func(string)) (core.ModelResponse, error) {
-	var auth []option.RequestOption
-	if p.config.Tokens != nil {
-		// Fetched here, not in middleware: the SDK retries a middleware error,
-		// which would spend a dead refresh token again on every attempt.
-		token, err := p.config.Tokens.token(ctx)
-		if err != nil {
-			return core.ModelResponse{}, err
-		}
-		auth = append(auth, option.WithAuthToken(token))
-	}
-	stream := p.client.Messages.NewStreaming(ctx, p.buildParams(req), auth...)
+	stream := p.client.Messages.NewStreaming(ctx, p.buildParams(req))
 	defer stream.Close()
 
 	msg := anthropic.Message{}
@@ -141,10 +122,6 @@ func (p *Provider) buildParams(req core.ModelRequest) anthropic.MessageNewParams
 		System:       []anthropic.TextBlockParam{{Text: req.System, CacheControl: anthropic.NewCacheControlEphemeralParam()}},
 		Thinking:     thinking(p.config.Thinking),
 		CacheControl: anthropic.NewCacheControlEphemeralParam(),
-	}
-	if p.config.Tokens != nil {
-		// Must come first: the OAuth path checks for it.
-		params.System = append([]anthropic.TextBlockParam{{Text: claudeCodeSystemInstruction}}, params.System...)
 	}
 	if p.config.Effort != "" {
 		params.OutputConfig = anthropic.OutputConfigParam{Effort: anthropic.OutputConfigEffort(p.config.Effort)}

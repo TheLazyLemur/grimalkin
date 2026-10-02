@@ -11,8 +11,7 @@ internal/config/          loads and validates ~/.config/grimalkin/config.json
 internal/core/            conversation, turn loop, tool rules, events,
                           ports (Model, Tool, Skills, Transcript)
 internal/adapters/
-  anthropic/              outbound: Model port over anthropic-sdk-go,
-                          plus Claude Pro/Max sign-in (oauth.go)
+  anthropic/              outbound: Model port over anthropic-sdk-go
   tools/                  outbound: tools (tools.Shell)
   skills/                 outbound: Skills port over SKILL.md directories,
                           rendering arguments, variables and !`cmd`
