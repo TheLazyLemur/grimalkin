@@ -57,6 +57,10 @@ to.
     the round's tool results (never edited into earlier messages, so the
     cache and thinking stay valid). Queuing is TUI-only; steering touches
     the core loop.
+12. **Web search and web fetch.** Today the model can only reach the web
+    through `curl` in the shell, with no search at all. Anthropic offers both
+    as server tools that run on its side; other providers such as Ollama
+    would need tools of grimalkin's own.
 
 ## Also worth considering
 
