@@ -33,6 +33,26 @@ func TestACommandReportsStdoutStderrAndExitCode(t *testing.T) {
 	}
 }
 
+func TestACommandCannotReachTheTerminal(t *testing.T) {
+	// given
+	// ... a command that would block reading the terminal, as a TUI, sudo or
+	// ... an ssh passphrase prompt does when stdin isn't one
+	input := commandInput("if : </dev/tty; then echo has-tty; else echo no-tty; fi 2>/dev/null")
+
+	// when
+	// ... it runs
+	content, err := Shell{}.Run(context.Background(), input)
+
+	// then
+	// ... it has no terminal to open, so it fails fast instead of hanging
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "no-tty\n[exit code 0]"; content != want {
+		t.Errorf("content = %q, want %q", content, want)
+	}
+}
+
 func TestCancellingKillsTheCommandAndItsChildren(t *testing.T) {
 	// given
 	// ... a command whose child would hold the output pipe open for ten seconds

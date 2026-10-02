@@ -230,7 +230,7 @@ func runCommand(ctx context.Context, command, dir string) (string, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
 	cmd.Dir = dir
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // no terminal to block on, as in the shell tool
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = time.Second
 	var out bytes.Buffer

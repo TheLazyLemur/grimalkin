@@ -61,7 +61,10 @@ type result struct {
 
 func run(ctx context.Context, command string) (result, error) {
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// A new session has no controlling terminal, so a command that opens
+	// /dev/tty (a TUI, sudo, an ssh prompt) fails instead of hanging. It also
+	// makes the command a process group leader, which Cancel relies on.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
