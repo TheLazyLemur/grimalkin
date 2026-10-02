@@ -1,14 +1,10 @@
-BIN := bin/grimalkin
+BUILD_DIR := bin
+BINARY_NAME := grimalkin
+INSTALL_DIR := ~/go/bin
 
-.PHONY: all build run test check clean
+.PHONY: all build run test check install clean
 
 all: build
-
-build:
-	go build -o $(BIN) .
-
-run: build
-	./$(BIN)
 
 check:
 	scripts/check-imports.sh
@@ -17,5 +13,17 @@ check:
 test: check
 	go test ./...
 
+build:
+	go build -o $(BUILD_DIR)/$(BINARY_NAME) .
+
+run: build
+	./$(BUILD_DIR)/$(BINARY_NAME)
+
+install: check test build
+	mkdir -p $(INSTALL_DIR)
+	rm -rf $(INSTALL_DIR)/$(BINARY_NAME)
+	mv $(BUILD_DIR)/$(BINARY_NAME) $(INSTALL_DIR)
+
 clean:
 	rm -rf bin
+
