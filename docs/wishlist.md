@@ -51,6 +51,12 @@ to.
     CI. Pair it with a fake Model adapter that replays recorded sessions as
     regression tests for prompt and loop changes. Cheap, since the port
     already exists.
+11. **Message queuing and steering.** Enter is ignored while a turn runs,
+    and Ctrl-C is the only way in. Queuing: hold the message and send it as
+    the next turn. Steering: hand it to the model mid-turn, appended after
+    the round's tool results (never edited into earlier messages, so the
+    cache and thinking stay valid). Queuing is TUI-only; steering touches
+    the core loop.
 
 ## Also worth considering
 
