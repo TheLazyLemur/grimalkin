@@ -156,6 +156,29 @@ func TestAKeyCommandsOutputIsTheKeyWithTrailingWhitespaceTrimmed(t *testing.T) {
 	}
 }
 
+func TestAClaudeOAuthProviderResolvesWithNoKey(t *testing.T) {
+	// given
+	// ... anthropic selected, authenticating with a Claude sign-in instead of a key
+	c := validConfig()
+	c["provider"], c["model"] = "anthropic", "opus"
+	delete(c.provider("anthropic"), "apiKey")
+	c.provider("anthropic")["auth"] = "claude-oauth"
+	path := writeConfig(t, c)
+
+	// when
+	// ... it is loaded
+	sel, err := Load(path)
+
+	// then
+	// ... the selection asks for Claude sign-in and carries no key
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sel.Auth != AuthClaudeOAuth || sel.APIKey != "" {
+		t.Errorf("auth, key = %q, %q, want %q, none", sel.Auth, sel.APIKey, AuthClaudeOAuth)
+	}
+}
+
 func TestInvalidConfigsAreRejected(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -171,7 +194,12 @@ func TestInvalidConfigsAreRejected(t *testing.T) {
 		{"effort outside the model's efforts", func(c raw) { c["effort"] = "medium" }, `effort "medium" is not one of`},
 		{"missing wire", func(c raw) { delete(c.provider("anthropic"), "wire") }, `providers.anthropic: missing "wire"`},
 		{"missing baseUrl", func(c raw) { delete(c.provider("anthropic"), "baseUrl") }, `providers.anthropic: missing "baseUrl"`},
-		{"missing apiKey", func(c raw) { delete(c.provider("anthropic"), "apiKey") }, `providers.anthropic: missing "apiKey"`},
+		{"missing apiKey", func(c raw) { delete(c.provider("anthropic"), "apiKey") }, `providers.anthropic: missing "apiKey" or "auth"`},
+		{"apiKey and auth", func(c raw) { c.provider("anthropic")["auth"] = "claude-oauth" }, `providers.anthropic: "apiKey" and "auth" are exclusive`},
+		{"unknown auth", func(c raw) {
+			delete(c.provider("anthropic"), "apiKey")
+			c.provider("anthropic")["auth"] = "carrier-pigeon"
+		}, `providers.anthropic: unknown auth "carrier-pigeon"`},
 		{"missing thinking", func(c raw) { delete(c.provider("anthropic"), "thinking") }, `providers.anthropic: missing "thinking"`},
 		{"missing models", func(c raw) { delete(c.provider("anthropic"), "models") }, `providers.anthropic: missing "models"`},
 		{"unknown wire", func(c raw) { c.provider("anthropic")["wire"] = "smoke-signals" }, `providers.anthropic: unknown wire "smoke-signals"`},

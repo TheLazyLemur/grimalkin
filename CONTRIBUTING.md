@@ -11,7 +11,8 @@ internal/config/          loads and validates ~/.config/grimalkin/config.json
 internal/core/            conversation, turn loop, tool rules, events,
                           ports (Model, Tool, Transcript)
 internal/adapters/
-  anthropic/              outbound: Model port over anthropic-sdk-go
+  anthropic/              outbound: Model port over anthropic-sdk-go,
+                          plus Claude Pro/Max sign-in (oauth.go)
   tools/                  outbound: tools (tools.Shell)
   clipboard/              outbound: tui.Clipboard via pbcopy
   tui/                    inbound: Bubble Tea UI, editor, navigation,

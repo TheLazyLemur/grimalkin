@@ -5,8 +5,12 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -38,6 +42,14 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	creds := anthropic.NewStore(filepath.Join(filepath.Dir(path), "creds.json"))
+	switch args := os.Args[1:]; {
+	case len(args) == 1 && args[0] == "login":
+		return login(creds)
+	case len(args) > 0:
+		return fmt.Errorf("usage: grimalkin [login]")
+	}
+
 	sel, err := config.Load(path)
 	if err != nil {
 		return err
@@ -50,11 +62,23 @@ func run() error {
 		return fmt.Errorf("get working directory: %w", err)
 	}
 
+	var tokens *anthropic.TokenSource
+	if sel.Auth == config.AuthClaudeOAuth {
+		tokens, err = anthropic.NewTokenSource(creds)
+		if errors.Is(err, anthropic.ErrNotSignedIn) {
+			return fmt.Errorf("provider %s signs in with Claude: run `grimalkin login`", sel.Provider)
+		}
+		if err != nil {
+			return err
+		}
+	}
+
 	store := tui.NewStore()
 	agent := &core.Agent{
 		Model: anthropic.New(anthropic.Config{
 			BaseURL:   sel.BaseURL,
 			APIKey:    sel.APIKey,
+			Tokens:    tokens,
 			Model:     sel.Model,
 			MaxTokens: maxTokens,
 			Thinking:  sel.Thinking,
@@ -72,6 +96,27 @@ func run() error {
 	label := fmt.Sprintf("%s · effort %s", sel.Model, effort)
 	store.AddInfo(fmt.Sprintf("provider %s · model %s · cwd %s", sel.Provider, sel.Model, cwd))
 	return tui.Run(agent, store, clipboard.Clipboard{}, label)
+}
+
+func login(store anthropic.Store) error {
+	c, err := anthropic.Login(context.Background(), openBrowser, os.Stdout)
+	if err != nil {
+		return err
+	}
+	if err := store.Save(c); err != nil {
+		return err
+	}
+	fmt.Printf("Signed in as %s. Saved to %s\n", c.Email, store.Path())
+	return nil
+}
+
+// openBrowser is best effort: Login prints the URL too.
+func openBrowser(url string) {
+	opener := "xdg-open"
+	if runtime.GOOS == "darwin" {
+		opener = "open"
+	}
+	_ = exec.Command(opener, url).Start()
 }
 
 func osName() string {

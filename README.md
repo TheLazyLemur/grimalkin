@@ -72,6 +72,7 @@ Each provider is an endpoint:
 | `wire`     | Request format. Only `anthropic-messages` exists.               |
 | `baseUrl`  | Endpoint.                                                       |
 | `apiKey`   | The key, or a command to print it if it starts with `!`.        |
+| `auth`     | `claude-oauth` to sign in with Claude instead. Replaces `apiKey`. |
 | `thinking` | How the endpoint turns thinking on: `adaptive`, `enabled` or `disabled`. |
 | `efforts`  | Effort names the models accept, sent as-is. Optional.           |
 | `models`   | The models it offers.                                           |
@@ -82,6 +83,24 @@ status bar shows `effort n/a`.
 
 A key command runs once at startup, for the selected provider only, and can
 prompt in the terminal. grimalkin ignores `ANTHROPIC_*` environment variables.
+
+### Claude Pro/Max sign-in
+
+A provider with `"auth": "claude-oauth"` uses your Claude subscription
+instead of an API key. Sign in once:
+
+```sh
+bin/grimalkin login
+```
+
+This opens claude.ai in your browser and waits for it on
+`localhost:54545`. The grant is saved to `~/.config/grimalkin/creds.json`
+(mode 0600) and refreshed as it expires. It lasts about 30 days; after
+that grimalkin tells you to log in again. grimalkin refuses to start if an
+OAuth provider is selected and you are not signed in.
+
+Requests on this path present themselves as Claude Code (headers, betas and
+a first system prompt line), which is what the subscription token requires.
 
 What to put where:
 
