@@ -24,7 +24,7 @@ func shownEntries(s *Store) []shownEntry {
 
 func TestTurnEventsBecomeEntries(t *testing.T) {
 	// given
-	// ... a turn that streams a reply, runs a tool with long output, fails a tool, replies again and is discarded
+	// ... a turn that streams a reply, runs a tool with long output, fails a tool, loads a skill, replies again and is discarded
 	var longOutput []string
 	for i := range 25 {
 		longOutput = append(longOutput, fmt.Sprint(i))
@@ -35,6 +35,7 @@ func TestTurnEventsBecomeEntries(t *testing.T) {
 		core.ToolFinished{ID: "1", Output: strings.Join(longOutput, "\n")},
 		core.ToolStarted{ID: "2", Name: "shell", Summary: "nope"},
 		core.ToolFinished{ID: "2", Output: "failed to run command: boom", IsError: true},
+		core.SkillLoaded{Name: "review", Content: "<skill_content name=\"review\">\nbody\n</skill_content>"},
 		core.ReplyStarted{}, core.ReplyText{Text: "Again"},
 		core.TurnDiscarded{Reason: "cancelled"},
 	}
@@ -54,6 +55,8 @@ func TestTurnEventsBecomeEntries(t *testing.T) {
 		{entryOutput, strings.Join(longOutput[:20], "\n") + "\n… 5 more lines"},
 		{entryCommand, "nope"},
 		{entryError, "failed to run command: boom"},
+		{entryCommand, "skill review"},
+		{entryOutput, "<skill_content name=\"review\">\nbody\n</skill_content>"},
 		{entryReply, "Again"},
 		{entryError, "cancelled (turn discarded)"},
 	}

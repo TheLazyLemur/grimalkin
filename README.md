@@ -4,14 +4,15 @@ A terminal coding agent with vim-style navigation, written in Go.
 
 grimalkin speaks the Anthropic Messages API through the official Go SDK, so it
 works with Claude or any compatible endpoint (e.g. Ollama). It renders with
-Bubble Tea and Lip Gloss and has one tool: a shell.
+Bubble Tea and Lip Gloss and has one tool, a shell, plus
+[skills](#skills).
 
 > **Warning:** the shell is **unsandboxed**. Every command the model chooses
 > runs as `/bin/sh -c` in the current directory, with your permissions and no
 > timeout.
 
 **Contents:** [Quick start](#quick-start) ·
-[Configuration](#configuration) · [Keys](#keys)
+[Configuration](#configuration) · [Skills](#skills) · [Keys](#keys)
 
 Working on grimalkin itself? See [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -109,6 +110,54 @@ What to put where:
   model's effort levels, run
   `curl localhost:11434/api/show -d '{"model":"<name>","verbose":true}'` and
   look at `thinking.values`; `false` and `true` are on/off, not efforts.
+
+## Skills
+
+grimalkin loads [Agent Skills](https://agentskills.io): directories holding a
+`SKILL.md`. It looks for them only in the directories you list under
+`skillDirs` in the config; with none listed, there are no skills.
+
+```json
+"skillDirs": ["~/.config/grimalkin/skills", ".agents/skills"]
+```
+
+Each entry is a directory of skill directories (`<entry>/<name>/SKILL.md`). A
+leading `~` is your home directory; a relative entry is relative to the
+working directory, so `.agents/skills` means the current project's. Entries
+that don't exist are skipped. When two skills share a name, the one in the
+earlier entry wins and the startup info lines say which was shadowed, along
+with any skill that couldn't be loaded.
+
+The model sees each skill's name and description in its system prompt and
+loads one with the `skill` tool. You load one by sending `/name arguments`.
+Loading renders the skill the way Claude Code does:
+
+- **Arguments:** `$ARGUMENTS` is everything after the name, as typed;
+  `$ARGUMENTS[N]` and `$N` pick one (0-based, shell-style quoting); `$name`
+  picks one by the names in the `arguments` field. If nothing uses them,
+  they are appended as `ARGUMENTS: …`. `\$1` is a literal `$1`.
+- **Variables:** `${GRIMALKIN_SKILL_DIR}` and `${GRIMALKIN_PROJECT_DIR}`.
+- **Commands:** `` !`cmd` `` (at a line start or after whitespace) and
+  ` ```! ` fenced blocks run with `/bin/sh` in the working directory before
+  the model sees the skill, and their output (stdout and stderr) replaces
+  them. A non-zero exit aborts the load, except exit 1 from `grep`, `rg`,
+  `find`, `diff`, `test`, `git diff` and similar. Each command has 2 minutes.
+
+> **Warning:** like the shell tool, these commands are **unsandboxed**, and
+> they run without showing up as tool calls. Only list skill directories you
+> trust.
+
+A skill is named by its directory, as in Claude Code; a frontmatter `name`
+that differs only earns a warning. Frontmatter fields acted on:
+`description` (defaults to the body's first line), `when_to_use`,
+`arguments`, `disable-model-invocation` (only you can load it) and
+`user-invocable: false` (only the model can). Others, such as
+`allowed-tools`, `model` or `context`, are ignored.
+
+The skill reaches the model without its frontmatter, wrapped in a
+`<skill_content>` block that names its directory and lists its bundled files.
+Loading a skill whose rendered content is already in the conversation sends a
+short note instead of a second copy.
 
 ## Keys
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -87,7 +88,7 @@ func TestAValidConfigResolvesTheSelectedModelWithoutRunningOtherKeyCommands(t *t
 		Thinking: "enabled",
 		Effort:   "high",
 	}
-	if sel != want {
+	if !reflect.DeepEqual(sel, want) {
 		t.Errorf("selection = %+v, want %+v", sel, want)
 	}
 }
@@ -179,6 +180,27 @@ func TestAClaudeOAuthProviderResolvesWithNoKey(t *testing.T) {
 	}
 }
 
+func TestSkillDirsAreCarriedThroughAsWrittenAndInOrder(t *testing.T) {
+	// given
+	// ... a config listing skill directories, one under home and one relative
+	c := validConfig()
+	c["skillDirs"] = []any{"~/.agents/skills", ".agents/skills"}
+	path := writeConfig(t, c)
+
+	// when
+	// ... it is loaded
+	sel, err := Load(path)
+
+	// then
+	// ... the selection lists them unchanged, in order
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"~/.agents/skills", ".agents/skills"}; !reflect.DeepEqual(sel.SkillDirs, want) {
+		t.Errorf("skill dirs = %q, want %q", sel.SkillDirs, want)
+	}
+}
+
 func TestInvalidConfigsAreRejected(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -212,6 +234,7 @@ func TestInvalidConfigsAreRejected(t *testing.T) {
 		{"unknown provider key", func(c raw) { c.provider("anthropic")["base_url"] = "x" }, `unknown field "base_url"`},
 		{"unknown model key", func(c raw) { c.model("anthropic", "haiku")["thinkng"] = "x" }, `unknown field "thinkng"`},
 		{"failing key command", func(c raw) { c.provider("ollama")["apiKey"] = "!exit 3" }, `providers.ollama: api key command: exit status 3`},
+		{"empty skill dir", func(c raw) { c["skillDirs"] = []any{"a", ""} }, `skillDirs[1] is empty`},
 		{"silent key command", func(c raw) { c.provider("ollama")["apiKey"] = "!true" }, `providers.ollama: api key command printed nothing`},
 	}
 	for _, tc := range cases {

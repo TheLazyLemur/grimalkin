@@ -9,11 +9,13 @@ implement or drive them, and one composition root wires them together.
 main.go                   composition root: loads config, wires adapters
 internal/config/          loads and validates ~/.config/grimalkin/config.json
 internal/core/            conversation, turn loop, tool rules, events,
-                          ports (Model, Tool, Transcript)
+                          ports (Model, Tool, Skills, Transcript)
 internal/adapters/
   anthropic/              outbound: Model port over anthropic-sdk-go,
                           plus Claude Pro/Max sign-in (oauth.go)
   tools/                  outbound: tools (tools.Shell)
+  skills/                 outbound: Skills port over SKILL.md directories,
+                          rendering arguments, variables and !`cmd`
   clipboard/              outbound: tui.Clipboard via pbcopy
   tui/                    inbound: Bubble Tea UI, editor, navigation,
                           markdown; drives the core via tui.Agent
@@ -32,7 +34,7 @@ defines the ports it consumes (`tui.Agent`, satisfied by `*core.Agent`, and
 
 **Events.** The core reports a turn to `Transcript` as events
 (`internal/core/events.go`): reply started, reply text, tool started, tool
-finished, turn discarded. The TUI decides how each looks.
+finished, skill loaded, turn discarded. The TUI decides how each looks.
 
 **Tools.** A tool implements `core.Tool`: a spec, a `Summary` of a call as a
 command line, and `Run`, which returns output or an error and must honour its
@@ -41,6 +43,14 @@ unknown names with an error, and caps each result at 30 KB (keeping the tail).
 
 To add a tool, add a type to `internal/adapters/tools` and list it in
 `toolCatalogue` in `main.go`.
+
+**Skills.** The `Skills` port lists skills and renders one; the adapter does
+all file and shell I/O. The core owns the rest: the catalog in the system
+prompt, the `skill` tool (only when the model may load at least one skill),
+`/name args` in a prompt, and dedup. Dedup searches the message history for
+identical content, so a discarded turn takes its skills with it. Skill
+content is exempt from the 30 KB tool result cap; the adapter caps each
+command's output instead. See `docs/specs/skills.md`.
 
 **Messages.** Assistant message content is opaque to the core: the provider
 stores the SDK's own `MessageParam` (thinking blocks and signatures intact)

@@ -3,7 +3,7 @@
 Ideas for grimalkin beyond what's already planned. Nothing here is committed
 to.
 
-**Planned:** skills system, subagents, auto mode.
+**Planned:** subagents, auto mode.
 
 ## Vim-native UI
 

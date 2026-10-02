@@ -74,3 +74,23 @@ type Tool interface {
 type Transcript interface {
 	Show(Event)
 }
+
+// Skill is a skill's catalog entry: what the model and the user can see
+// before it is loaded.
+type Skill struct {
+	Name        string
+	Description string
+	// ModelInvocable is false when the skill opts out of model activation:
+	// it is left out of the catalog and the skill tool.
+	ModelInvocable bool
+	// UserInvocable is false when the user can't load it with /name.
+	UserInvocable bool
+}
+
+// Skills is the skill library. Render returns a skill's instructions with
+// arguments expanded, ready to put in front of the model; an error aborts
+// that activation.
+type Skills interface {
+	List() []Skill
+	Render(ctx context.Context, name, arguments string) (string, error)
+}

@@ -18,8 +18,13 @@ type ToolFinished struct {
 
 type TurnDiscarded struct{ Reason string }
 
+// SkillLoaded reports a skill the user loaded with /name. Content is what the
+// model receives.
+type SkillLoaded struct{ Name, Content string }
+
 func (ReplyStarted) isEvent()  {}
 func (ReplyText) isEvent()     {}
 func (ToolStarted) isEvent()   {}
 func (ToolFinished) isEvent()  {}
 func (TurnDiscarded) isEvent() {}
+func (SkillLoaded) isEvent()   {}

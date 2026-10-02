@@ -40,6 +40,10 @@ type Selection struct {
 	Model    string
 	Thinking string // empty for wires without a thinking setting
 	Effort   string // empty when the model has no effort levels
+
+	// SkillDirs are the directories to load skills from, as written: a
+	// leading ~ and relative paths are left to the caller. Earlier wins.
+	SkillDirs []string
 }
 
 type file struct {
@@ -47,6 +51,7 @@ type file struct {
 	Model     string              `json:"model"`
 	Effort    string              `json:"effort"`
 	Providers map[string]provider `json:"providers"`
+	SkillDirs []string            `json:"skillDirs"`
 }
 
 type provider struct {
@@ -113,6 +118,12 @@ func (f file) resolve() (Selection, error) {
 		}
 	}
 
+	for i, dir := range f.SkillDirs {
+		if dir == "" {
+			return Selection{}, fmt.Errorf("skillDirs[%d] is empty", i)
+		}
+	}
+
 	p, ok := f.Providers[f.Provider]
 	if !ok {
 		return Selection{}, fmt.Errorf("provider %q is not declared", f.Provider)
@@ -145,14 +156,15 @@ func (f file) resolve() (Selection, error) {
 		}
 	}
 	return Selection{
-		Provider: f.Provider,
-		Wire:     p.Wire,
-		BaseURL:  p.BaseURL,
-		APIKey:   key,
-		Auth:     p.Auth,
-		Model:    f.Model,
-		Thinking: thinking,
-		Effort:   effort,
+		Provider:  f.Provider,
+		Wire:      p.Wire,
+		BaseURL:   p.BaseURL,
+		APIKey:    key,
+		Auth:      p.Auth,
+		Model:     f.Model,
+		Thinking:  thinking,
+		Effort:    effort,
+		SkillDirs: f.SkillDirs,
 	}, nil
 }
 

@@ -13,6 +13,7 @@ type Agent struct {
 	Transcript Transcript
 	System     string
 	Tools      []Tool
+	Skills     Skills // optional
 
 	messages []Message
 
@@ -20,7 +21,9 @@ type Agent struct {
 	cancel context.CancelFunc
 }
 
-func SystemPrompt(osName, cwd string) string {
+// SystemPrompt is the system prompt, with a catalog of the skills the model
+// may load.
+func SystemPrompt(osName, cwd string, skills []Skill) string {
 	p := `You are a coding agent in a terminal on %s. Working directory: %s. 
 The user chose brevity over narration. You should:
 
@@ -32,7 +35,7 @@ Give full detail on request — When the user asks for an explanation or detail,
 Never trade correctness for brevity — Error reports, failing test output, security warnings, and confirmations for destructive actions keep their full content.
 Where these rules conflict with more general communication or formatting guidance elsewhere in your instructions, these rules win.
 `
-	return fmt.Sprintf(p, osName, cwd)
+	return fmt.Sprintf(p, osName, cwd) + skillCatalog(skills)
 }
 
 func (a *Agent) Cancel() {
@@ -57,7 +60,21 @@ func (a *Agent) RunTurn(prompt string) {
 	}()
 
 	checkpoint := len(a.messages)
-	a.messages = append(a.messages, Message{Role: RoleUser, Text: prompt})
+	text := prompt
+	if name, arguments, ok := a.userSkill(prompt); ok {
+		content, err := a.loadSkill(ctx, name, arguments, nil)
+		if err != nil {
+			reason := fmt.Sprintf("skill %s: %v", name, err)
+			if ctx.Err() != nil {
+				reason = "cancelled"
+			}
+			a.discardTurn(checkpoint, reason)
+			return
+		}
+		a.Transcript.Show(SkillLoaded{Name: name, Content: content})
+		text = content
+	}
+	a.messages = append(a.messages, Message{Role: RoleUser, Text: text})
 
 	specs := a.toolSpecs()
 	for range maxModelCalls {
@@ -83,7 +100,7 @@ func (a *Agent) RunTurn(prompt string) {
 			}
 			results := make([]ToolResult, len(resp.ToolCalls))
 			for i, call := range resp.ToolCalls {
-				results[i] = a.runTool(ctx, call)
+				results[i] = a.runTool(ctx, call, results[:i])
 				if ctx.Err() != nil {
 					a.discardTurn(checkpoint, "cancelled")
 					return
@@ -111,6 +128,9 @@ func (a *Agent) checkWiring() {
 			panic(fmt.Sprintf("two tools named %q", name))
 		}
 		names[name] = true
+	}
+	if a.Skills != nil && names[skillToolName] {
+		panic(fmt.Sprintf("tool %q clashes with the skill tool", skillToolName))
 	}
 }
 

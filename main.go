@@ -16,6 +16,7 @@ import (
 
 	"grimalkin/internal/adapters/anthropic"
 	"grimalkin/internal/adapters/clipboard"
+	"grimalkin/internal/adapters/skills"
 	"grimalkin/internal/adapters/tools"
 	"grimalkin/internal/adapters/tui"
 	"grimalkin/internal/config"
@@ -73,6 +74,11 @@ func run() error {
 		}
 	}
 
+	library, warnings, err := skills.Load(sel.SkillDirs, cwd)
+	if err != nil {
+		return err
+	}
+
 	store := tui.NewStore()
 	agent := &core.Agent{
 		Model: anthropic.New(anthropic.Config{
@@ -85,8 +91,9 @@ func run() error {
 			Effort:    sel.Effort,
 		}),
 		Transcript: store,
-		System:     core.SystemPrompt(osName(), cwd),
+		System:     core.SystemPrompt(osName(), cwd, library.List()),
 		Tools:      toolCatalogue,
+		Skills:     library,
 	}
 
 	effort := sel.Effort
@@ -95,6 +102,16 @@ func run() error {
 	}
 	label := fmt.Sprintf("%s · effort %s", sel.Model, effort)
 	store.AddInfo(fmt.Sprintf("provider %s · model %s · cwd %s", sel.Provider, sel.Model, cwd))
+	if list := library.List(); len(list) > 0 {
+		names := make([]string, len(list))
+		for i, s := range list {
+			names[i] = s.Name
+		}
+		store.AddInfo("skills: " + strings.Join(names, ", "))
+	}
+	for _, w := range warnings {
+		store.AddInfo(w)
+	}
 	return tui.Run(agent, store, clipboard.Clipboard{}, label)
 }
 

@@ -75,6 +75,9 @@ func (s *Store) Show(event core.Event) {
 		} else {
 			s.add(entryOutput, firstLines(event.Output, maxOutputLines))
 		}
+	case core.SkillLoaded:
+		s.add(entryCommand, "skill "+event.Name)
+		s.add(entryOutput, firstLines(event.Content, maxOutputLines))
 	case core.TurnDiscarded:
 		s.add(entryError, event.Reason+" (turn discarded)")
 	default:
