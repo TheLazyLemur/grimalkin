@@ -1,9 +1,7 @@
 // Command grimalkin is a terminal coding agent. See README.md.
 //
-// main is the composition root: it builds the adapters and wires them to the
-// core's ports. The only place concrete types meet. The Anthropic SDK reads
-// its own environment variables (ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN,
-// ANTHROPIC_BASE_URL, ...).
+// main is the composition root: it loads the config, builds the adapters and
+// wires them to the core's ports. The only place concrete types meet.
 package main
 
 import (
@@ -16,11 +14,11 @@ import (
 	"grimalkin/internal/adapters/clipboard"
 	"grimalkin/internal/adapters/tools"
 	"grimalkin/internal/adapters/tui"
+	"grimalkin/internal/config"
 	"grimalkin/internal/core"
 )
 
 var (
-	defaultModel  = "claude-opus-5"
 	maxTokens     = 32_000
 	toolCatalogue = []core.Tool{
 		tools.Shell{},
@@ -36,9 +34,16 @@ func main() {
 }
 
 func run() error {
-	model := os.Getenv("AGENT_MODEL")
-	if model == "" {
-		model = defaultModel
+	path, err := config.DefaultPath()
+	if err != nil {
+		return err
+	}
+	sel, err := config.Load(path)
+	if err != nil {
+		return err
+	}
+	if sel.Wire != config.WireAnthropicMessages {
+		panic(fmt.Sprintf("no adapter for wire %q", sel.Wire))
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -47,14 +52,26 @@ func run() error {
 
 	store := tui.NewStore()
 	agent := &core.Agent{
-		Model:      anthropic.New(anthropic.Config{Model: model, MaxTokens: maxTokens}),
+		Model: anthropic.New(anthropic.Config{
+			BaseURL:   sel.BaseURL,
+			APIKey:    sel.APIKey,
+			Model:     sel.Model,
+			MaxTokens: maxTokens,
+			Thinking:  sel.Thinking,
+			Effort:    sel.Effort,
+		}),
 		Transcript: store,
 		System:     core.SystemPrompt(osName(), cwd),
 		Tools:      toolCatalogue,
 	}
 
-	store.AddInfo(fmt.Sprintf("model %s · cwd %s", model, cwd))
-	return tui.Run(agent, store, clipboard.Clipboard{}, model)
+	effort := sel.Effort
+	if effort == "" {
+		effort = "n/a"
+	}
+	label := fmt.Sprintf("%s · effort %s", sel.Model, effort)
+	store.AddInfo(fmt.Sprintf("provider %s · model %s · cwd %s", sel.Provider, sel.Model, cwd))
+	return tui.Run(agent, store, clipboard.Clipboard{}, label)
 }
 
 func osName() string {

@@ -11,9 +11,17 @@ import (
 	"grimalkin/internal/core"
 )
 
+// thinkingBudget is the budget_tokens sent with "enabled" thinking. Not
+// configurable: Ollama ignores it and Claude 5.x rejects "enabled" anyway.
+const thinkingBudget = 16_000
+
 type Config struct {
+	BaseURL   string
+	APIKey    string
 	Model     string
 	MaxTokens int
+	Thinking  string // "adaptive", "enabled" or "disabled"
+	Effort    string // sent verbatim; empty sends none
 }
 
 type Provider struct {
@@ -21,11 +29,35 @@ type Provider struct {
 	config Config
 }
 
-func New(config Config, opts ...option.RequestOption) *Provider {
-	if config.Model == "" || config.MaxTokens <= 0 {
+// New builds a client from config alone: the SDK's environment defaults
+// (ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, profiles, ...) are switched off so
+// no other credential reaches the configured endpoint.
+func New(config Config) *Provider {
+	if config.BaseURL == "" || config.APIKey == "" || config.Model == "" || config.MaxTokens <= 0 {
 		panic("provider not configured")
 	}
-	return &Provider{client: anthropic.NewClient(opts...), config: config}
+	if config.Thinking == "enabled" && config.MaxTokens <= thinkingBudget {
+		panic(fmt.Sprintf("max tokens %d must exceed the thinking budget %d", config.MaxTokens, thinkingBudget))
+	}
+	thinking(config.Thinking) // panics on a value config validation should have rejected
+	client := anthropic.NewClient(
+		option.WithoutEnvironmentDefaults(),
+		option.WithBaseURL(config.BaseURL),
+		option.WithAPIKey(config.APIKey),
+	)
+	return &Provider{client: client, config: config}
+}
+
+func thinking(value string) anthropic.ThinkingConfigParamUnion {
+	switch value {
+	case "adaptive":
+		return anthropic.ThinkingConfigParamUnion{OfAdaptive: &anthropic.ThinkingConfigAdaptiveParam{}}
+	case "enabled":
+		return anthropic.ThinkingConfigParamOfEnabled(thinkingBudget)
+	case "disabled":
+		return anthropic.ThinkingConfigParamUnion{OfDisabled: &anthropic.ThinkingConfigDisabledParam{}}
+	}
+	panic(fmt.Sprintf("unknown thinking %q", value))
 }
 
 func (p *Provider) Stream(ctx context.Context, req core.ModelRequest, onText func(string)) (core.ModelResponse, error) {
@@ -85,6 +117,10 @@ func (p *Provider) buildParams(req core.ModelRequest) anthropic.MessageNewParams
 		Model:     anthropic.Model(p.config.Model),
 		MaxTokens: int64(p.config.MaxTokens),
 		System:    []anthropic.TextBlockParam{{Text: req.System}},
+		Thinking:  thinking(p.config.Thinking),
+	}
+	if p.config.Effort != "" {
+		params.OutputConfig = anthropic.OutputConfigParam{Effort: anthropic.OutputConfigEffort(p.config.Effort)}
 	}
 	for _, tool := range req.Tools {
 		var schema anthropic.ToolInputSchemaParam

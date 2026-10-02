@@ -6,7 +6,8 @@ Ports and adapters: a pure domain core defines the ports it needs, adapters
 implement or drive them, and one composition root wires them together.
 
 ```
-main.go                   configuration and composition root
+main.go                   composition root: loads config, wires adapters
+internal/config/          loads and validates ~/.config/grimalkin/config.json
 internal/core/            conversation, turn loop, tool rules, events,
                           ports (Model, Tool, Transcript)
 internal/adapters/

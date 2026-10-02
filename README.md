@@ -19,8 +19,9 @@ Working on grimalkin itself? See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Requires Go 1.26 on macOS or Linux.
 
+Write a [config file](#configuration), then:
+
 ```sh
-export ANTHROPIC_API_KEY=...
 make run
 ```
 
@@ -28,21 +29,67 @@ make run
 
 ## Configuration
 
-Configuration is by environment variable only.
+grimalkin reads `~/.config/grimalkin/config.json` (on every platform) and
+nothing else. It refuses to start if the file is missing, has a key it doesn't
+recognise, or selects something it doesn't list.
 
-| Variable             | Default         | Purpose                        |
-| -------------------- | --------------- | ------------------------------ |
-| `AGENT_MODEL`        | `claude-opus-5` | Model name                     |
-| `ANTHROPIC_API_KEY`  | —               | API key (read by the SDK)      |
-| `ANTHROPIC_BASE_URL` | Anthropic API   | Endpoint (read by the SDK)     |
+```json
+{
+  "provider": "ollama",
+  "model": "glm-5.3-flash:cloud",
+  "effort": "high",
 
-Any other variable the Anthropic SDK reads (e.g. `ANTHROPIC_AUTH_TOKEN`) works
-too. To use Ollama's Anthropic-compatible endpoint:
-
-```sh
-ANTHROPIC_API_KEY=ollama ANTHROPIC_BASE_URL=http://localhost:11434 \
-  AGENT_MODEL=deepseek-v4.1-flash:cloud ./bin/grimalkin
+  "providers": {
+    "anthropic": {
+      "wire": "anthropic-messages",
+      "baseUrl": "https://api.anthropic.com",
+      "apiKey": "!printenv ANTHROPIC_API_KEY",
+      "thinking": "adaptive",
+      "efforts": ["low", "medium", "high", "xhigh", "max"],
+      "models": {
+        "claude-opus-5": {}
+      }
+    },
+    "ollama": {
+      "wire": "anthropic-messages",
+      "baseUrl": "http://localhost:11434",
+      "apiKey": "ollama",
+      "thinking": "enabled",
+      "models": {
+        "glm-5.3-flash:cloud": { "efforts": ["low", "high", "max"] },
+        "gemma4:31b-cloud": {}
+      }
+    }
+  }
+}
 ```
+
+`provider`, `model` and `effort` choose what to run; all three are required.
+Each provider is an endpoint:
+
+| Field      | Meaning                                                         |
+| ---------- | --------------------------------------------------------------- |
+| `wire`     | Request format. Only `anthropic-messages` exists.               |
+| `baseUrl`  | Endpoint.                                                       |
+| `apiKey`   | The key, or a command to print it if it starts with `!`.        |
+| `thinking` | How the endpoint turns thinking on: `adaptive`, `enabled` or `disabled`. |
+| `efforts`  | Effort names the models accept, sent as-is. Optional.           |
+| `models`   | The models it offers.                                           |
+
+A model can override `thinking` and `efforts`. A model with no `efforts`, on
+itself or its provider, has no effort levels: grimalkin sends none and the
+status bar shows `effort n/a`.
+
+A key command runs once at startup, for the selected provider only, and can
+prompt in the terminal. grimalkin ignores `ANTHROPIC_*` environment variables.
+
+What to put where:
+
+- **Claude** accepts `adaptive` thinking; 5.x models reject `enabled`.
+- **Ollama** only turns thinking on for some models with `enabled`. To find a
+  model's effort levels, run
+  `curl localhost:11434/api/show -d '{"model":"<name>","verbose":true}'` and
+  look at `thinking.values`; `false` and `true` are on/off, not efforts.
 
 ## Keys
 
