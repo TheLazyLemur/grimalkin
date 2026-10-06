@@ -90,7 +90,8 @@ func TestAConversationIsEncodedForTheAPIAndAStreamedToolCallDecoded(t *testing.T
 
 	// then
 	// ... the body carries the configured thinking and effort and each message in
-	// ... API form, tools and system are cached apart from the conversation,
+	// ... API form, tools and system are cached apart from the conversation for
+	// ... an hour each, as Claude Code does,
 	// ... only the configured key is sent, text streamed out, and the tool call
 	// ... and unsigned thinking came back ready to be sent again
 	if err != nil {
@@ -127,13 +128,13 @@ func TestAConversationIsEncodedForTheAPIAndAStreamedToolCallDecoded(t *testing.T
 	if wire.OutputConfig["effort"] != "high" {
 		t.Errorf("output_config = %+v", wire.OutputConfig)
 	}
-	if wire.System[0].Text != "be brief" || wire.System[0].CacheControl["type"] != "ephemeral" {
+	if wire.System[0].Text != "be brief" || wire.System[0].CacheControl["type"] != "ephemeral" || wire.System[0].CacheControl["ttl"] != "1h" {
 		t.Errorf("system = %+v", wire.System)
 	}
 	if wire.CacheControl != nil {
 		t.Errorf("top-level cache_control = %+v, want none", wire.CacheControl)
 	}
-	if c, _ := wire.Messages[2].Content[0]["cache_control"].(map[string]any); c["type"] != "ephemeral" {
+	if c, _ := wire.Messages[2].Content[0]["cache_control"].(map[string]any); c["type"] != "ephemeral" || c["ttl"] != "1h" {
 		t.Errorf("last block cache_control = %+v", c)
 	}
 	if c := wire.Messages[0].Content[0]["cache_control"]; c != nil {

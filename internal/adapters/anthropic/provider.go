@@ -113,10 +113,12 @@ func stopReason(r anthropic.StopReason) core.StopReason {
 }
 
 func (p *Provider) buildParams(req core.ModelRequest) anthropic.MessageNewParams {
-	// Two cache breakpoints, both set on blocks: the system block caches tools
-	// and system, which don't change in a session; the last message block
-	// follows the end of the conversation, so each request reads the previous
-	// one's prefix.
+	// Two cache breakpoints, set on blocks with a 1h TTL as Claude Code does:
+	// a proxy cloaking requests as Claude Code adds its own 1h breakpoints, and
+	// the API rejects a block whose breakpoints disagree on TTL. The system
+	// block caches tools and system, which don't change in a session; the last
+	// message block follows the end of the conversation, so each request
+	// reads the previous one's prefix.
 	params := anthropic.MessageNewParams{
 		Model:     anthropic.Model(p.config.Model),
 		MaxTokens: int64(p.config.MaxTokens),
@@ -167,7 +169,9 @@ func (p *Provider) buildParams(req core.ModelRequest) anthropic.MessageNewParams
 }
 
 func cacheControl() anthropic.CacheControlEphemeralParam {
-	return anthropic.NewCacheControlEphemeralParam()
+	c := anthropic.NewCacheControlEphemeralParam()
+	c.TTL = anthropic.CacheControlEphemeralTTLTTL1h
+	return c
 }
 
 func describeError(err error) error {
