@@ -64,3 +64,35 @@ func TestTurnEventsBecomeEntries(t *testing.T) {
 		t.Errorf("entries = %+v\nwant %+v", got, want)
 	}
 }
+
+func TestADividerSeparatesEachTurnFromTheLast(t *testing.T) {
+	// given
+	// ... startup info and two turns
+	store := NewStore()
+	store.AddInfo("model x")
+	store.addUser("one")
+	store.Show(core.ReplyStarted{})
+	store.Show(core.ReplyText{Text: "first"})
+	store.addUser("two")
+	store.Show(core.ReplyStarted{})
+	store.Show(core.ReplyText{Text: "second"})
+
+	// when
+	// ... the transcript is rendered 10 columns wide
+	lines := store.render(10)
+
+	// then
+	// ... a full-width rule sits before the second turn only, and is left out of yanks
+	var texts []string
+	for _, line := range lines {
+		texts = append(texts, lineText(line))
+	}
+	divider := strings.Repeat("━", 10)
+	want := []string{"model x", "", "› one", "", "first", "", divider, "", "› two", "", "second", ""}
+	if !slices.Equal(texts, want) {
+		t.Fatalf("lines %q\nwant %q", texts, want)
+	}
+	if lines[6].prefixLen != 10 || lines[6].startsEntry {
+		t.Errorf("divider %+v", lines[6])
+	}
+}

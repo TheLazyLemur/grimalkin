@@ -104,9 +104,16 @@ func (s *Store) notify() {
 func (s *Store) render(width int) (lines []screenLine) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	turnSeen := false
 	for _, e := range s.entries {
 		if e.text.Len() == 0 {
 			continue
+		}
+		if e.kind == entryUser {
+			if turnSeen {
+				lines = append(lines, turnDivider(width), screenLine{})
+			}
+			turnSeen = true
 		}
 		if e.lines == nil || e.renderedLen != e.text.Len() || e.renderedWidth != width {
 			e.lines, e.renderedLen, e.renderedWidth = renderEntry(e.kind, e.text.String(), width), e.text.Len(), width
@@ -143,6 +150,13 @@ func renderEntry(kind entryKind, text string, width int) []screenLine {
 		lines = wrapPlainText(text, width, colorError, 0, nil, nil)
 	}
 	return append(lines, screenLine{})
+}
+
+// turnDivider is a heavy rule, apart from the light one a reply's markdown
+// can draw. Its cells count as prefix, so yanks and searches skip it.
+func turnDivider(width int) screenLine {
+	cells := styledCells(strings.Repeat("━", width), colorRule, 0)
+	return screenLine{cells: cells, prefixLen: len(cells)}
 }
 
 func firstLines(s string, count int) string {
