@@ -130,8 +130,14 @@ func TestAConversationIsEncodedForTheAPIAndAStreamedToolCallDecoded(t *testing.T
 	if wire.System[0].Text != "be brief" || wire.System[0].CacheControl["type"] != "ephemeral" {
 		t.Errorf("system = %+v", wire.System)
 	}
-	if wire.CacheControl["type"] != "ephemeral" {
-		t.Errorf("cache_control = %+v", wire.CacheControl)
+	if wire.CacheControl != nil {
+		t.Errorf("top-level cache_control = %+v, want none", wire.CacheControl)
+	}
+	if c, _ := wire.Messages[2].Content[0]["cache_control"].(map[string]any); c["type"] != "ephemeral" {
+		t.Errorf("last block cache_control = %+v", c)
+	}
+	if c := wire.Messages[0].Content[0]["cache_control"]; c != nil {
+		t.Errorf("first block cache_control = %+v, want none", c)
 	}
 	if streamed.String() != "Listing." {
 		t.Errorf("streamed = %q", streamed.String())

@@ -113,15 +113,15 @@ func stopReason(r anthropic.StopReason) core.StopReason {
 }
 
 func (p *Provider) buildParams(req core.ModelRequest) anthropic.MessageNewParams {
-	// Two cache breakpoints: the last system block caches tools and system,
-	// which don't change in a session; the top-level one follows the end of
-	// the conversation, so each request reads the previous one's prefix.
+	// Two cache breakpoints, both set on blocks: the system block caches tools
+	// and system, which don't change in a session; the last message block
+	// follows the end of the conversation, so each request reads the previous
+	// one's prefix.
 	params := anthropic.MessageNewParams{
-		Model:        anthropic.Model(p.config.Model),
-		MaxTokens:    int64(p.config.MaxTokens),
-		System:       []anthropic.TextBlockParam{{Text: req.System, CacheControl: anthropic.NewCacheControlEphemeralParam()}},
-		Thinking:     thinking(p.config.Thinking),
-		CacheControl: anthropic.NewCacheControlEphemeralParam(),
+		Model:     anthropic.Model(p.config.Model),
+		MaxTokens: int64(p.config.MaxTokens),
+		System:    []anthropic.TextBlockParam{{Text: req.System, CacheControl: cacheControl()}},
+		Thinking:  thinking(p.config.Thinking),
 	}
 	if p.config.Effort != "" {
 		params.OutputConfig = anthropic.OutputConfigParam{Effort: anthropic.OutputConfigEffort(p.config.Effort)}
@@ -158,7 +158,16 @@ func (p *Provider) buildParams(req core.ModelRequest) anthropic.MessageNewParams
 			params.Messages = append(params.Messages, anthropic.NewUserMessage(blocks...))
 		}
 	}
+	if len(params.Messages) == 0 {
+		panic("request has no messages")
+	}
+	last := params.Messages[len(params.Messages)-1].Content
+	*last[len(last)-1].GetCacheControl() = cacheControl()
 	return params
+}
+
+func cacheControl() anthropic.CacheControlEphemeralParam {
+	return anthropic.NewCacheControlEphemeralParam()
 }
 
 func describeError(err error) error {
