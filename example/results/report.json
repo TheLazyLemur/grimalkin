@@ -1,0 +1,778 @@
+{
+  "model": [
+    "jev-1.13.0"
+  ],
+  "files": 39,
+  "candidate_bytes": 213877,
+  "requests": 39,
+  "retries": 0,
+  "input_tokens": 120308,
+  "cost_usd": 0.005052936,
+  "wall_s": 2.15091049997136,
+  "latency_p50_s": 0.41527708317153156,
+  "latency_max_s": 0.6591386671643704,
+  "threshold": 0.5,
+  "queries": {
+    "cancel_kill": {
+      "question": "Where is a running shell command, and the processes it started, killed when the user stops a turn?",
+      "jev": {
+        "must_ranks": {
+          "internal/adapters/tools/shell.go": 1,
+          "internal/core/agent.go": 10,
+          "internal/adapters/tui/tui.go": 16
+        },
+        "recall@3": 0.3333333333333333,
+        "recall@5": 0.3333333333333333,
+        "selected": 4,
+        "selected_recall": 0.3333333333333333,
+        "selected_noise": [
+          "docs/specs/skills.md"
+        ],
+        "selected_bytes": 24418,
+        "top5": [
+          [
+            "internal/adapters/tools/shell.go",
+            0.92
+          ],
+          [
+            "README.md",
+            0.9
+          ],
+          [
+            "docs/specs/skills.md",
+            0.78
+          ],
+          [
+            "internal/adapters/skills/render.go",
+            0.76
+          ],
+          [
+            "docs/specs/subagents.md",
+            0.39
+          ]
+        ]
+      },
+      "rg": {
+        "must_ranks": {
+          "internal/adapters/tools/shell.go": 4,
+          "internal/core/agent.go": 2,
+          "internal/adapters/tui/tui.go": 5
+        },
+        "recall@3": 0.3333333333333333,
+        "recall@5": 1.0,
+        "selected": 9,
+        "selected_recall": 1.0,
+        "selected_noise": [
+          "internal/adapters/skills/skills_test.go"
+        ],
+        "selected_bytes": 61984,
+        "pattern": "Cancel|Kill|SIGKILL",
+        "top5": [
+          [
+            "internal/adapters/skills/skills_test.go",
+            3
+          ],
+          [
+            "internal/core/agent.go",
+            3
+          ],
+          [
+            "docs/specs/subagents.md",
+            2
+          ],
+          [
+            "internal/adapters/tools/shell.go",
+            2
+          ],
+          [
+            "internal/adapters/tui/tui.go",
+            2
+          ]
+        ]
+      }
+    },
+    "api_key_command": {
+      "question": "Where is the provider's API key command run and its output used as the key?",
+      "jev": {
+        "must_ranks": {
+          "internal/config/config.go": 1
+        },
+        "recall@3": 1.0,
+        "recall@5": 1.0,
+        "selected": 3,
+        "selected_recall": 1.0,
+        "selected_noise": [],
+        "selected_bytes": 33653,
+        "top5": [
+          [
+            "internal/config/config.go",
+            0.98
+          ],
+          [
+            "README.md",
+            0.93
+          ],
+          [
+            "docs/specs/provider-config.md",
+            0.91
+          ],
+          [
+            "docs/specs/subagents.md",
+            0.19
+          ],
+          [
+            "internal/adapters/skills/render.go",
+            0.14
+          ]
+        ]
+      },
+      "rg": {
+        "must_ranks": {
+          "internal/config/config.go": 2
+        },
+        "recall@3": 1.0,
+        "recall@5": 1.0,
+        "selected": 7,
+        "selected_recall": 1.0,
+        "selected_noise": [
+          "internal/adapters/anthropic/provider.go",
+          "internal/adapters/anthropic/provider_test.go"
+        ],
+        "selected_bytes": 56735,
+        "pattern": "apiKey|APIKey",
+        "top5": [
+          [
+            "internal/config/config_test.go",
+            10
+          ],
+          [
+            "internal/config/config.go",
+            5
+          ],
+          [
+            "docs/specs/provider-config.md",
+            4
+          ],
+          [
+            "README.md",
+            3
+          ],
+          [
+            "internal/adapters/anthropic/provider.go",
+            3
+          ]
+        ]
+      }
+    },
+    "result_truncation": {
+      "question": "Where is a tool result cut down when it is larger than the size limit?",
+      "jev": {
+        "must_ranks": {
+          "internal/core/tools.go": 2
+        },
+        "recall@3": 1.0,
+        "recall@5": 1.0,
+        "selected": 5,
+        "selected_recall": 1.0,
+        "selected_noise": [
+          "internal/adapters/tui/transcript.go"
+        ],
+        "selected_bytes": 21884,
+        "top5": [
+          [
+            "internal/adapters/skills/render.go",
+            0.97
+          ],
+          [
+            "internal/core/tools.go",
+            0.97
+          ],
+          [
+            "internal/adapters/tui/transcript.go",
+            0.95
+          ],
+          [
+            "CONTRIBUTING.md",
+            0.86
+          ],
+          [
+            "docs/specs/skills.md",
+            0.8
+          ]
+        ]
+      },
+      "rg": {
+        "must_ranks": {
+          "internal/core/tools.go": 1
+        },
+        "recall@3": 1.0,
+        "recall@5": 1.0,
+        "selected": 8,
+        "selected_recall": 1.0,
+        "selected_noise": [
+          "docs/specs/provider-config.md",
+          "docs/wishlist.md",
+          "internal/adapters/skills/skills.go"
+        ],
+        "selected_bytes": 64452,
+        "pattern": "truncat|30_000|limit",
+        "top5": [
+          [
+            "internal/core/tools.go",
+            9
+          ],
+          [
+            "internal/adapters/skills/skills.go",
+            4
+          ],
+          [
+            "internal/adapters/skills/render.go",
+            2
+          ],
+          [
+            "docs/specs/provider-config.md",
+            1
+          ],
+          [
+            "docs/specs/skills.md",
+            1
+          ]
+        ]
+      }
+    },
+    "markdown_render": {
+      "question": "Where are the assistant's replies rendered as markdown in the terminal?",
+      "jev": {
+        "must_ranks": {
+          "internal/adapters/tui/render.go": 3
+        },
+        "recall@3": 1.0,
+        "recall@5": 1.0,
+        "selected": 3,
+        "selected_recall": 1.0,
+        "selected_noise": [],
+        "selected_bytes": 21786,
+        "top5": [
+          [
+            "internal/adapters/tui/transcript.go",
+            0.91
+          ],
+          [
+            "README.md",
+            0.89
+          ],
+          [
+            "internal/adapters/tui/render.go",
+            0.81
+          ],
+          [
+            "internal/adapters/skills/render.go",
+            0.49
+          ],
+          [
+            "CONTRIBUTING.md",
+            0.48
+          ]
+        ]
+      },
+      "rg": {
+        "must_ranks": {
+          "internal/adapters/tui/render.go": 1
+        },
+        "recall@3": 1.0,
+        "recall@5": 1.0,
+        "selected": 5,
+        "selected_recall": 1.0,
+        "selected_noise": [
+          "CONTRIBUTING.md"
+        ],
+        "selected_bytes": 26850,
+        "pattern": "markdown|Markdown",
+        "top5": [
+          [
+            "internal/adapters/tui/render.go",
+            7
+          ],
+          [
+            "internal/adapters/tui/render_test.go",
+            4
+          ],
+          [
+            "internal/adapters/tui/transcript.go",
+            2
+          ],
+          [
+            "CONTRIBUTING.md",
+            1
+          ],
+          [
+            "README.md",
+            1
+          ]
+        ]
+      }
+    },
+    "prompt_cache": {
+      "question": "Where is prompt caching configured on requests sent to the model API?",
+      "jev": {
+        "must_ranks": {
+          "internal/adapters/anthropic/provider.go": 1
+        },
+        "recall@3": 1.0,
+        "recall@5": 1.0,
+        "selected": 2,
+        "selected_recall": 1.0,
+        "selected_noise": [],
+        "selected_bytes": 13790,
+        "top5": [
+          [
+            "internal/adapters/anthropic/provider.go",
+            0.97
+          ],
+          [
+            "internal/adapters/anthropic/provider_test.go",
+            0.51
+          ],
+          [
+            "docs/specs/subagents.md",
+            0.16
+          ],
+          [
+            "main.go",
+            0.08
+          ],
+          [
+            "README.md",
+            0.07
+          ]
+        ]
+      },
+      "rg": {
+        "must_ranks": {
+          "internal/adapters/anthropic/provider.go": 2
+        },
+        "recall@3": 1.0,
+        "recall@5": 1.0,
+        "selected": 4,
+        "selected_recall": 1.0,
+        "selected_noise": [
+          "docs/specs/subagents.md",
+          "docs/wishlist.md"
+        ],
+        "selected_bytes": 30560,
+        "pattern": "cache|Cache",
+        "top5": [
+          [
+            "internal/adapters/anthropic/provider_test.go",
+            10
+          ],
+          [
+            "internal/adapters/anthropic/provider.go",
+            7
+          ],
+          [
+            "docs/specs/subagents.md",
+            4
+          ],
+          [
+            "docs/wishlist.md",
+            1
+          ]
+        ]
+      }
+    },
+    "skill_arguments": {
+      "question": "Where are skill arguments such as $ARGUMENTS substituted into a skill's content?",
+      "jev": {
+        "must_ranks": {
+          "internal/adapters/skills/render.go": 1
+        },
+        "recall@3": 1.0,
+        "recall@5": 1.0,
+        "selected": 4,
+        "selected_recall": 1.0,
+        "selected_noise": [],
+        "selected_bytes": 28721,
+        "top5": [
+          [
+            "internal/adapters/skills/render.go",
+            0.97
+          ],
+          [
+            "docs/specs/skills.md",
+            0.94
+          ],
+          [
+            "README.md",
+            0.92
+          ],
+          [
+            "internal/adapters/skills/skills.go",
+            0.53
+          ],
+          [
+            "CONTRIBUTING.md",
+            0.43
+          ]
+        ]
+      },
+      "rg": {
+        "must_ranks": {
+          "internal/adapters/skills/render.go": 2
+        },
+        "recall@3": 1.0,
+        "recall@5": 1.0,
+        "selected": 4,
+        "selected_recall": 1.0,
+        "selected_noise": [],
+        "selected_bytes": 33967,
+        "pattern": "ARGUMENTS",
+        "top5": [
+          [
+            "internal/adapters/skills/skills_test.go",
+            8
+          ],
+          [
+            "internal/adapters/skills/render.go",
+            4
+          ],
+          [
+            "README.md",
+            3
+          ],
+          [
+            "docs/specs/skills.md",
+            2
+          ]
+        ]
+      }
+    },
+    "clipboard_yank": {
+      "question": "Where is yanked transcript text copied to the system clipboard?",
+      "jev": {
+        "must_ranks": {
+          "internal/adapters/tui/tui.go": 1,
+          "internal/adapters/clipboard/clipboard.go": 3
+        },
+        "recall@3": 1.0,
+        "recall@5": 1.0,
+        "selected": 3,
+        "selected_recall": 1.0,
+        "selected_noise": [],
+        "selected_bytes": 19939,
+        "top5": [
+          [
+            "internal/adapters/tui/tui.go",
+            0.91
+          ],
+          [
+            "README.md",
+            0.87
+          ],
+          [
+            "internal/adapters/clipboard/clipboard.go",
+            0.86
+          ],
+          [
+            "CONTRIBUTING.md",
+            0.19
+          ],
+          [
+            "internal/adapters/tui/view.go",
+            0.09
+          ]
+        ]
+      },
+      "rg": {
+        "must_ranks": {
+          "internal/adapters/tui/tui.go": 1,
+          "internal/adapters/clipboard/clipboard.go": 2
+        },
+        "recall@3": 1.0,
+        "recall@5": 1.0,
+        "selected": 6,
+        "selected_recall": 1.0,
+        "selected_noise": [
+          "CONTRIBUTING.md"
+        ],
+        "selected_bytes": 26745,
+        "pattern": "clipboard|Clipboard",
+        "top5": [
+          [
+            "internal/adapters/tui/tui.go",
+            8
+          ],
+          [
+            "internal/adapters/clipboard/clipboard.go",
+            3
+          ],
+          [
+            "internal/adapters/tui/tui_test.go",
+            3
+          ],
+          [
+            "CONTRIBUTING.md",
+            2
+          ],
+          [
+            "main.go",
+            2
+          ]
+        ]
+      }
+    },
+    "import_rules": {
+      "question": "What enforces that adapters do not import other adapters?",
+      "jev": {
+        "must_ranks": {
+          "scripts/check-imports.sh": 1
+        },
+        "recall@3": 1.0,
+        "recall@5": 1.0,
+        "selected": 2,
+        "selected_recall": 1.0,
+        "selected_noise": [],
+        "selected_bytes": 3743,
+        "top5": [
+          [
+            "scripts/check-imports.sh",
+            0.89
+          ],
+          [
+            "CONTRIBUTING.md",
+            0.77
+          ],
+          [
+            "internal/core/ports.go",
+            0.24
+          ],
+          [
+            "docs/specs/provider-config.md",
+            0.17
+          ],
+          [
+            "Makefile",
+            0.16
+          ]
+        ]
+      },
+      "rg": {
+        "must_ranks": {
+          "scripts/check-imports.sh": 1
+        },
+        "recall@3": 1.0,
+        "recall@5": 1.0,
+        "selected": 34,
+        "selected_recall": 1.0,
+        "selected_noise": [
+          "docs/specs/provider-config.md",
+          "internal/adapters/anthropic/provider.go",
+          "internal/adapters/anthropic/provider_test.go",
+          "internal/adapters/clipboard/clipboard.go",
+          "internal/adapters/skills/frontmatter.go",
+          "internal/adapters/skills/render.go",
+          "internal/adapters/skills/skills.go",
+          "internal/adapters/skills/skills_test.go",
+          "internal/adapters/tools/shell.go",
+          "internal/adapters/tools/shell_test.go",
+          "internal/adapters/tui/editor.go",
+          "internal/adapters/tui/editor_test.go",
+          "internal/adapters/tui/keys.go",
+          "internal/adapters/tui/keys_test.go",
+          "internal/adapters/tui/render.go",
+          "internal/adapters/tui/render_test.go",
+          "internal/adapters/tui/transcript.go",
+          "internal/adapters/tui/transcript_test.go",
+          "internal/adapters/tui/tui.go",
+          "internal/adapters/tui/tui_test.go",
+          "internal/adapters/tui/view.go",
+          "internal/adapters/tui/view_test.go",
+          "internal/config/config.go",
+          "internal/config/config_test.go",
+          "internal/core/agent.go",
+          "internal/core/agent_test.go",
+          "internal/core/ports.go",
+          "internal/core/skills.go",
+          "internal/core/skills_test.go",
+          "internal/core/tools.go",
+          "main.go"
+        ],
+        "selected_bytes": 182285,
+        "pattern": "import",
+        "top5": [
+          [
+            "scripts/check-imports.sh",
+            5
+          ],
+          [
+            "CONTRIBUTING.md",
+            4
+          ],
+          [
+            "internal/core/ports.go",
+            2
+          ],
+          [
+            "Makefile",
+            1
+          ],
+          [
+            "docs/specs/provider-config.md",
+            1
+          ]
+        ]
+      }
+    },
+    "no_terminal_hang": {
+      "question": "What stops a command from hanging when it tries to prompt for a password on the terminal?",
+      "jev": {
+        "must_ranks": {
+          "internal/adapters/tools/shell.go": 1,
+          "internal/adapters/skills/render.go": 2
+        },
+        "recall@3": 1.0,
+        "recall@5": 1.0,
+        "selected": 3,
+        "selected_recall": 1.0,
+        "selected_noise": [],
+        "selected_bytes": 16633,
+        "top5": [
+          [
+            "internal/adapters/tools/shell.go",
+            0.96
+          ],
+          [
+            "internal/adapters/skills/render.go",
+            0.93
+          ],
+          [
+            "internal/config/config.go",
+            0.54
+          ],
+          [
+            "docs/specs/skills.md",
+            0.46
+          ],
+          [
+            "docs/specs/provider-config.md",
+            0.43
+          ]
+        ]
+      },
+      "rg": {
+        "must_ranks": {
+          "internal/adapters/tools/shell.go": 5,
+          "internal/adapters/skills/render.go": 6
+        },
+        "recall@3": 0.0,
+        "recall@5": 0.5,
+        "selected": 10,
+        "selected_recall": 1.0,
+        "selected_noise": [
+          "docs/specs/provider-config.md",
+          "internal/adapters/tui/render.go",
+          "internal/core/agent.go",
+          "main.go"
+        ],
+        "selected_bytes": 73946,
+        "pattern": "tty|terminal|password",
+        "top5": [
+          [
+            "docs/specs/provider-config.md",
+            4
+          ],
+          [
+            "internal/adapters/tools/shell_test.go",
+            4
+          ],
+          [
+            "README.md",
+            3
+          ],
+          [
+            "docs/specs/subagents.md",
+            3
+          ],
+          [
+            "internal/adapters/tools/shell.go",
+            2
+          ]
+        ]
+      }
+    },
+    "skill_dedup": {
+      "question": "Where is a skill that is already in the conversation prevented from being sent to the model again?",
+      "jev": {
+        "must_ranks": {
+          "internal/core/skills.go": 1
+        },
+        "recall@3": 1.0,
+        "recall@5": 1.0,
+        "selected": 5,
+        "selected_recall": 1.0,
+        "selected_noise": [],
+        "selected_bytes": 35065,
+        "top5": [
+          [
+            "internal/core/skills.go",
+            0.97
+          ],
+          [
+            "docs/specs/skills.md",
+            0.94
+          ],
+          [
+            "README.md",
+            0.88
+          ],
+          [
+            "CONTRIBUTING.md",
+            0.85
+          ],
+          [
+            "docs/specs/subagents.md",
+            0.65
+          ]
+        ]
+      },
+      "rg": {
+        "must_ranks": {
+          "internal/core/skills.go": 5
+        },
+        "recall@3": 0.0,
+        "recall@5": 1.0,
+        "selected": 10,
+        "selected_recall": 1.0,
+        "selected_noise": [
+          "docs/specs/provider-config.md",
+          "docs/wishlist.md",
+          "internal/adapters/skills/skills_test.go"
+        ],
+        "selected_bytes": 84724,
+        "pattern": "dedup|already",
+        "top5": [
+          [
+            "docs/specs/subagents.md",
+            5
+          ],
+          [
+            "docs/specs/provider-config.md",
+            3
+          ],
+          [
+            "docs/specs/skills.md",
+            3
+          ],
+          [
+            "docs/wishlist.md",
+            3
+          ],
+          [
+            "internal/core/skills.go",
+            3
+          ]
+        ]
+      }
+    }
+  }
+}

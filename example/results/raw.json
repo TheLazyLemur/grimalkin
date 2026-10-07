@@ -1,0 +1,1991 @@
+{
+  "CONTRIBUTING.md": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.14
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.86
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.48
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.43
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.19
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.77
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.06
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.85
+      }
+    },
+    "usage": {
+      "input_tokens": 2138,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.5103479998651892,
+    "_attempts": 1
+  },
+  "Makefile": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.01
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.05
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.01
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.16
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.02
+      }
+    },
+    "usage": {
+      "input_tokens": 1566,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.439130499958992,
+    "_attempts": 1
+  },
+  "README.md": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.9
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.93
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.07
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.89
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.07
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.92
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.87
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.25
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.88
+      }
+    },
+    "usage": {
+      "input_tokens": 3705,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.5080933750141412,
+    "_attempts": 1
+  },
+  "docs/specs/provider-config.md": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.06
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.91
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.17
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.43
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.06
+      }
+    },
+    "usage": {
+      "input_tokens": 5909,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.44621445797383785,
+    "_attempts": 1
+  },
+  "docs/specs/skills.md": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.78
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.8
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.05
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.94
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.46
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.94
+      }
+    },
+    "usage": {
+      "input_tokens": 2711,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.4665069589391351,
+    "_attempts": 1
+  },
+  "docs/specs/subagents.md": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.39
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.19
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.45
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.16
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.16
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.36
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.65
+      }
+    },
+    "usage": {
+      "input_tokens": 4721,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.49961175001226366,
+    "_attempts": 1
+  },
+  "docs/wishlist.md": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.12
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.08
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.07
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.17
+      }
+    },
+    "usage": {
+      "input_tokens": 2387,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.45121999992989004,
+    "_attempts": 1
+  },
+  "internal/adapters/anthropic/provider.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.05
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.05
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.97
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.22
+      }
+    },
+    "usage": {
+      "input_tokens": 3216,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.4539020420052111,
+    "_attempts": 1
+  },
+  "internal/adapters/anthropic/provider_test.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.05
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.05
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.51
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.19
+      }
+    },
+    "usage": {
+      "input_tokens": 3796,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.4193846669513732,
+    "_attempts": 1
+  },
+  "internal/adapters/clipboard/clipboard.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.01
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.86
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.02
+      }
+    },
+    "usage": {
+      "input_tokens": 1509,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.39132458297535777,
+    "_attempts": 1
+  },
+  "internal/adapters/skills/frontmatter.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.11
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.06
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.09
+      }
+    },
+    "usage": {
+      "input_tokens": 2335,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.3726849581580609,
+    "_attempts": 1
+  },
+  "internal/adapters/skills/render.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.76
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.14
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.97
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.49
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.97
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.93
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.06
+      }
+    },
+    "usage": {
+      "input_tokens": 3838,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.3937943330965936,
+    "_attempts": 1
+  },
+  "internal/adapters/skills/skills.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.32
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.1
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.53
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.1
+      }
+    },
+    "usage": {
+      "input_tokens": 3510,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.42197108385153115,
+    "_attempts": 1
+  },
+  "internal/adapters/skills/skills_test.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.12
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.05
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.16
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.08
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.08
+      }
+    },
+    "usage": {
+      "input_tokens": 5426,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.40201250021345913,
+    "_attempts": 1
+  },
+  "internal/adapters/tools/shell.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.92
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.06
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.06
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.96
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.03
+      }
+    },
+    "usage": {
+      "input_tokens": 2143,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.401757457992062,
+    "_attempts": 1
+  },
+  "internal/adapters/tools/shell_test.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.2
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.06
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.05
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.23
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.03
+      }
+    },
+    "usage": {
+      "input_tokens": 2015,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.43714662501588464,
+    "_attempts": 1
+  },
+  "internal/adapters/tui/editor.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.29
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.01
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.06
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.03
+      }
+    },
+    "usage": {
+      "input_tokens": 4279,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.4089359170757234,
+    "_attempts": 1
+  },
+  "internal/adapters/tui/editor_test.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.02
+      }
+    },
+    "usage": {
+      "input_tokens": 2907,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.36850429186597466,
+    "_attempts": 1
+  },
+  "internal/adapters/tui/keys.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.01
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.06
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.02
+      }
+    },
+    "usage": {
+      "input_tokens": 1919,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.4816356669180095,
+    "_attempts": 1
+  },
+  "internal/adapters/tui/keys_test.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.01
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.02
+      }
+    },
+    "usage": {
+      "input_tokens": 1702,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.39470458403229713,
+    "_attempts": 1
+  },
+  "internal/adapters/tui/render.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.01
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.25
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.81
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.01
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.02
+      }
+    },
+    "usage": {
+      "input_tokens": 4385,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.4054452918935567,
+    "_attempts": 1
+  },
+  "internal/adapters/tui/render_test.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.01
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.14
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.01
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.02
+      }
+    },
+    "usage": {
+      "input_tokens": 2110,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.36424716585315764,
+    "_attempts": 1
+  },
+  "internal/adapters/tui/transcript.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.95
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.91
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.05
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.05
+      }
+    },
+    "usage": {
+      "input_tokens": 2754,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.4059764158446342,
+    "_attempts": 1
+  },
+  "internal/adapters/tui/transcript_test.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.17
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.14
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.06
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.07
+      }
+    },
+    "usage": {
+      "input_tokens": 2367,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.44999999995343387,
+    "_attempts": 1
+  },
+  "internal/adapters/tui/tui.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.05
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.15
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.2
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.91
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.06
+      }
+    },
+    "usage": {
+      "input_tokens": 4964,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.44916400010697544,
+    "_attempts": 1
+  },
+  "internal/adapters/tui/tui_test.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.05
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.03
+      }
+    },
+    "usage": {
+      "input_tokens": 1959,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.37679837504401803,
+    "_attempts": 1
+  },
+  "internal/adapters/tui/view.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.07
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.1
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.09
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.02
+      }
+    },
+    "usage": {
+      "input_tokens": 4941,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.45730675011873245,
+    "_attempts": 1
+  },
+  "internal/adapters/tui/view_test.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.01
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.01
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.03
+      }
+    },
+    "usage": {
+      "input_tokens": 4262,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.403310458175838,
+    "_attempts": 1
+  },
+  "internal/config/config.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.07
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.98
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.54
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.04
+      }
+    },
+    "usage": {
+      "input_tokens": 3303,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.4221416669897735,
+    "_attempts": 1
+  },
+  "internal/config/config_test.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.12
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.05
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.04
+      }
+    },
+    "usage": {
+      "input_tokens": 3751,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.4510859160218388,
+    "_attempts": 1
+  },
+  "internal/core/agent.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.11
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.07
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.11
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.05
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.15
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.2
+      }
+    },
+    "usage": {
+      "input_tokens": 2635,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.41527708317153156,
+    "_attempts": 1
+  },
+  "internal/core/agent_test.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.06
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.13
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.13
+      }
+    },
+    "usage": {
+      "input_tokens": 3949,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.6591386671643704,
+    "_attempts": 1
+  },
+  "internal/core/events.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.05
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.05
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.05
+      }
+    },
+    "usage": {
+      "input_tokens": 1618,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.3813106659799814,
+    "_attempts": 1
+  },
+  "internal/core/ports.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.05
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.05
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.21
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.24
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.08
+      }
+    },
+    "usage": {
+      "input_tokens": 1968,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.37149204197339714,
+    "_attempts": 1
+  },
+  "internal/core/skills.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.05
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.16
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.97
+      }
+    },
+    "usage": {
+      "input_tokens": 2790,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.39246683404780924,
+    "_attempts": 1
+  },
+  "internal/core/skills_test.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.05
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.13
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.13
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.22
+      }
+    },
+    "usage": {
+      "input_tokens": 5026,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.4214183329604566,
+    "_attempts": 1
+  },
+  "internal/core/tools.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.05
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.97
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.08
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.11
+      }
+    },
+    "usage": {
+      "input_tokens": 2027,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.3811877090483904,
+    "_attempts": 1
+  },
+  "main.go": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.06
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.04
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.06
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.09
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.08
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.05
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.07
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.05
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.05
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.06
+      }
+    },
+    "usage": {
+      "input_tokens": 2113,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.39892050018534064,
+    "_attempts": 1
+  },
+  "scripts/check-imports.sh": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "cancel_kill": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "api_key_command": {
+        "type": "noul",
+        "noul": 0.01
+      },
+      "result_truncation": {
+        "type": "noul",
+        "noul": 0.03
+      },
+      "markdown_render": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "prompt_cache": {
+        "type": "noul",
+        "noul": 0.01
+      },
+      "skill_arguments": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "clipboard_yank": {
+        "type": "noul",
+        "noul": 0.01
+      },
+      "import_rules": {
+        "type": "noul",
+        "noul": 0.89
+      },
+      "no_terminal_hang": {
+        "type": "noul",
+        "noul": 0.02
+      },
+      "skill_dedup": {
+        "type": "noul",
+        "noul": 0.05
+      }
+    },
+    "usage": {
+      "input_tokens": 1654,
+      "output_tokens": 183
+    },
+    "_latency_s": 0.3732810830697417,
+    "_attempts": 1
+  }
+}
