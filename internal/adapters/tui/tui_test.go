@@ -34,7 +34,7 @@ func TestCtrlCCancelsARunningTurnAndQuitsOnceItHasFinished(t *testing.T) {
 	// given
 	// ... a prompt sent to the agent
 	agent := &fakeAgent{}
-	m := newModel(agent, NewStore(), nopClipboard{}, "fake")
+	m := newModel(agent, NewStore(), nopClipboard{}, "fake", nil)
 	m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
 	typeText(m, "hi")
 	_, runTurn := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -69,7 +69,7 @@ func TestContentSitsInsideMarginsWithTheCursorOnIt(t *testing.T) {
 	// given
 	// ... a wide, tall terminal with a reply and some typed input
 	store := NewStore()
-	m := newModel(&fakeAgent{}, store, nopClipboard{}, "fake")
+	m := newModel(&fakeAgent{}, store, nopClipboard{}, "fake", nil)
 	store.AddInfo("hello")
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
 	typeText(m, "hi")
@@ -98,7 +98,7 @@ func TestContentSitsInsideMarginsWithTheCursorOnIt(t *testing.T) {
 func TestNarrowTerminalsDropTheMarginsAndKeepTheTurnState(t *testing.T) {
 	// given
 	// ... a narrow terminal with a turn running
-	m := newModel(&fakeAgent{}, NewStore(), nopClipboard{}, "a-long-model-name")
+	m := newModel(&fakeAgent{}, NewStore(), nopClipboard{}, "a-long-model-name", nil)
 	m.Update(tea.WindowSizeMsg{Width: 24, Height: 8})
 	typeText(m, "hi")
 	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -136,7 +136,7 @@ func TestStatusKeepsModeAndActivityAheadOfLongNotesAndModelNames(t *testing.T) {
 	for _, width := range []int{10, 12, 24, 30, 59, 60, 80, 120} {
 		for _, mode := range modes {
 			for _, busy := range []bool{false, true} {
-				m := newModel(&fakeAgent{}, NewStore(), nopClipboard{}, strings.Repeat("長いモデル", 10))
+				m := newModel(&fakeAgent{}, NewStore(), nopClipboard{}, strings.Repeat("長いモデル", 10), nil)
 				m.width, m.height = width, 20
 				m.focus, m.editor.mode, m.transcript.visual = mode.focus, mode.editor, mode.visual
 				m.statusNote = "pattern not found: " + strings.Repeat("漢字", 30)
@@ -161,7 +161,7 @@ func TestStatusKeepsModeAndActivityAheadOfLongNotesAndModelNames(t *testing.T) {
 }
 
 func TestResizeKeepsWrappedInputAndCursorInsideTheContent(t *testing.T) {
-	m := newModel(&fakeAgent{}, NewStore(), nopClipboard{}, "fake")
+	m := newModel(&fakeAgent{}, NewStore(), nopClipboard{}, "fake", nil)
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	typeText(m, strings.Repeat("漢字 abc ", 12)+"\nnext")
 	for _, size := range []struct{ width, height int }{
@@ -190,7 +190,7 @@ func TestResizeKeepsWrappedInputAndCursorInsideTheContent(t *testing.T) {
 func TestTranscriptCursorSearchAndSelectionRespectMargins(t *testing.T) {
 	store := NewStore()
 	store.AddInfo("漢字 hello")
-	m := newModel(&fakeAgent{}, store, nopClipboard{}, "fake")
+	m := newModel(&fakeAgent{}, store, nopClipboard{}, "fake", nil)
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m.focusTranscript()
 	m.transcript.cursor = position{0, 3} // h, after two double-width characters and a space
@@ -222,7 +222,7 @@ func TestTranscriptCursorSearchAndSelectionRespectMargins(t *testing.T) {
 }
 
 func TestLongSearchKeepsItsTailAndCursorVisible(t *testing.T) {
-	m := newModel(&fakeAgent{}, NewStore(), nopClipboard{}, "fake")
+	m := newModel(&fakeAgent{}, NewStore(), nopClipboard{}, "fake", nil)
 	m.Update(tea.WindowSizeMsg{Width: 30, Height: 16})
 	m.focusTranscript()
 	m.Update(tea.KeyPressMsg{Code: '?', Text: "?"})
@@ -254,7 +254,7 @@ func foldModel(t *testing.T) *model {
 	store.Show(core.ToolFinished{ID: "1", Output: "1\n2\n3\n4\n5\n6\n7\n8\n9\n10"})
 	store.Show(core.ToolStarted{ID: "2", Name: "shell", Summary: "seq 6"})
 	store.Show(core.ToolFinished{ID: "2", Output: "1\n2\n3\n4\n5\n6"})
-	m := newModel(&fakeAgent{}, store, nopClipboard{}, "fake")
+	m := newModel(&fakeAgent{}, store, nopClipboard{}, "fake", nil)
 	m.Update(tea.WindowSizeMsg{Width: 60, Height: 40})
 	m.focusTranscript()
 	return m
@@ -364,7 +364,7 @@ func TestCollapsingFromDeepInsideOutputLandsOnItsCommandInView(t *testing.T) {
 	store.Show(core.ToolFinished{ID: "1", Output: strings.Join(out, "\n")})
 	store.Show(core.ReplyStarted{})
 	store.Show(core.ReplyText{Text: strings.Repeat("x\n", 60)})
-	m := newModel(&fakeAgent{}, store, nopClipboard{}, "fake")
+	m := newModel(&fakeAgent{}, store, nopClipboard{}, "fake", nil)
 	m.Update(tea.WindowSizeMsg{Width: 60, Height: 40})
 	m.focusTranscript()
 	pressKeys(m, "zR")
@@ -396,7 +396,7 @@ func TestFoldingAllKeepsACursorOnADividerOnThatDivider(t *testing.T) {
 	store.Show(core.ToolStarted{ID: "1", Name: "shell", Summary: "seq 100"})
 	store.Show(core.ToolFinished{ID: "1", Output: strings.Join(out, "\n")})
 	store.addUser("two")
-	m := newModel(&fakeAgent{}, store, nopClipboard{}, "fake")
+	m := newModel(&fakeAgent{}, store, nopClipboard{}, "fake", nil)
 	m.Update(tea.WindowSizeMsg{Width: 60, Height: 40})
 	m.focusTranscript()
 	divider := slices.IndexFunc(m.lines, func(l screenLine) bool {
@@ -440,7 +440,7 @@ func TestZAfterAnotherPendingKeyCancelsLikeBefore(t *testing.T) {
 func TestZeroWidthRunesInANoteCannotPushTheStateOff(t *testing.T) {
 	// given
 	// ... a long note of Thai syllables with tone marks while a turn runs
-	m := newModel(&fakeAgent{}, NewStore(), nopClipboard{}, "fake")
+	m := newModel(&fakeAgent{}, NewStore(), nopClipboard{}, "fake", nil)
 	m.width, m.height = 80, 20
 	m.statusNote = "pattern not found: " + strings.Repeat("ก\u0e48", 40)
 	m.busy = true
@@ -452,6 +452,116 @@ func TestZeroWidthRunesInANoteCannotPushTheStateOff(t *testing.T) {
 	// then
 	// ... the note is cut and the full state still shows
 	if !strings.HasSuffix(status, "working · ctrl-c to stop") || !strings.Contains(status, "…") {
+		t.Errorf("status %q", status)
+	}
+}
+
+type fakeRepoMap struct {
+	text    string
+	live    bool
+	indexed int
+}
+
+func (f *fakeRepoMap) Indicator() (string, bool) { return f.text, f.live }
+
+// Index starts a build, as the real map does.
+func (f *fakeRepoMap) Index() string {
+	f.indexed++
+	f.text, f.live = "map …", true
+	return "index: building"
+}
+
+func TestTheStatusBarShowsALiveIndicatorAndStopsPollingWhenItSettles(t *testing.T) {
+	// given
+	// ... an indicator reporting a build in progress
+	indicator := &fakeRepoMap{text: "map 42%", live: true}
+	m := newModel(&fakeAgent{}, NewStore(), nopClipboard{}, "fake", indicator)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
+
+	// when
+	// ... the UI starts, a poll finds the build further on, and the next finds it done
+	started := m.Init()
+	atStart := ansi.Strip(m.renderStatusBar())
+	indicator.text = "map 87%"
+	_, whileLive := m.Update(indicatorTickMsg{})
+	later := ansi.Strip(m.renderStatusBar())
+	indicator.text, indicator.live = "map ✓", false
+	_, settled := m.Update(indicatorTickMsg{})
+	atEnd := ansi.Strip(m.renderStatusBar())
+
+	// then
+	// ... the progress shows beside the model name and follows each poll
+	if !strings.Contains(atStart, "map 42%  fake") || !strings.Contains(later, "map 87%") || !strings.Contains(atEnd, "map ✓") {
+		t.Errorf("status %q, then %q, then %q", atStart, later, atEnd)
+	}
+	// ... and another poll is scheduled only while it is live
+	if started == nil || whileLive == nil || settled != nil {
+		t.Errorf("commands: at start %v, while live %v, once settled %v", started != nil, whileLive != nil, settled != nil)
+	}
+}
+
+func TestIndexBuildsTheRepoMapWithoutATurn(t *testing.T) {
+	// given
+	// ... a repo map that has not been built and is not being polled
+	agent := &fakeAgent{}
+	store := NewStore()
+	repoMap := &fakeRepoMap{}
+	m := newModel(agent, store, nopClipboard{}, "fake", repoMap)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
+	m.Init()
+
+	// when
+	// ... the user sends /index
+	typeText(m, "/index")
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	// then
+	// ... the map is built and its line shown, with nothing sent to the model
+	want := []shownEntry{{entryInfo, "index: building"}}
+	if got := shownEntries(store); repoMap.indexed != 1 || len(agent.prompts) != 0 || m.busy || !slices.Equal(got, want) {
+		t.Errorf("indexed %d times, prompts %q, busy %v, entries %+v", repoMap.indexed, agent.prompts, m.busy, got)
+	}
+	// ... and the status bar follows the build from then on
+	if status := ansi.Strip(m.renderStatusBar()); cmd == nil || !strings.Contains(status, "map …") {
+		t.Errorf("polling %v, status %q", cmd != nil, status)
+	}
+}
+
+func TestIndexWithoutARepoMapSaysHowToTurnItOn(t *testing.T) {
+	// given
+	// ... no repo map
+	agent := &fakeAgent{}
+	store := NewStore()
+	m := newModel(agent, store, nopClipboard{}, "fake", nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
+
+	// when
+	// ... the user sends /index
+	typeText(m, "/index")
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	// then
+	// ... an info line names the setting, and nothing is sent to the model
+	got := shownEntries(store)
+	if len(agent.prompts) != 0 || len(got) != 1 || !strings.Contains(got[0].text, `set "map": true`) {
+		t.Errorf("prompts %q, entries %+v", agent.prompts, got)
+	}
+}
+
+func TestTheIndicatorIsDroppedBeforeTheModeOrState(t *testing.T) {
+	// given
+	// ... a narrow terminal and a long indicator
+	m := newModel(&fakeAgent{}, NewStore(), nopClipboard{}, "fake", &fakeRepoMap{text: "map 99% and much more", live: true})
+	m.width, m.height = 24, 10
+	m.Init()
+
+	// when
+	// ... the status bar is drawn
+	status := strings.TrimSpace(ansi.Strip(m.renderStatusBar()))
+
+	// then
+	// ... the mode and state keep their place and the indicator gives way
+	if !strings.HasPrefix(status, "insert") || !strings.HasSuffix(status, "ready") || strings.Contains(status, "map") {
 		t.Errorf("status %q", status)
 	}
 }

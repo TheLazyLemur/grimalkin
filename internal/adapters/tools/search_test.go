@@ -23,6 +23,9 @@ type fakeJev struct {
 	paths  []string
 	bodies []map[string]any
 	status []int // statuses to answer with before succeeding
+	// refuse, when set, is text that makes Jev answer 500 for any excerpt
+	// holding it.
+	refuse string
 }
 
 func (f *fakeJev) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -45,6 +48,10 @@ func (f *fakeJev) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Unlock()
 	if r.Header.Get("Authorization") != "Bearer test-key" {
 		http.Error(w, "unauthorised", 401)
+		return
+	}
+	if f.refuse != "" && strings.Contains(state["content"].(string), f.refuse) {
+		http.Error(w, "no", 500)
 		return
 	}
 	score := 0.1
@@ -91,7 +98,7 @@ func searchWith(t *testing.T, dir string, jev http.Handler) *Search {
 	t.Helper()
 	server := httptest.NewServer(jev)
 	t.Cleanup(server.Close)
-	s := NewSearch(dir, "test-key", "jev-test")
+	s := NewSearch(dir, "test-key", "jev-test", false)
 	s.endpoint = server.URL
 	return s
 }
@@ -311,6 +318,81 @@ func TestSearchTermsAddToTheQuerysKeywords(t *testing.T) {
 	}
 }
 
+func TestSearchPointsAtTheBestPartOfALargeFile(t *testing.T) {
+	// given
+	// ... a large file whose keywords crowd its start, while the part that
+	// ... answers the query sits two chunks further down
+	filler := strings.Repeat("// padding line for the chunker\n", searchChunkBytes/32)
+	content := strings.Repeat("// drag drag drag\n", 20) + filler + filler + "func onDrop() { drag winner }\n"
+	dir := project(t, map[string]string{"gantt.go": content})
+	jev := &fakeJev{}
+	s := searchWith(t, dir, jev)
+
+	// when
+	// ... the model searches for the keyword
+	out, err := s.Run(context.Background(), searchInputJSON("where is a drag dropped", []string{"drag"}, ""))
+
+	// then
+	// ... the result points at the chunk holding the answer, not the first
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := strings.Count(content, "\n")
+	want := fmt.Sprintf("-%d [Jev relevance 0.90", last)
+	if strings.Contains(out, "gantt.go:1-") || !strings.Contains(out, want) {
+		t.Errorf("want gantt.go's range to end at line %d with the higher score:\n%s", last, out)
+	}
+}
+
+func TestSearchNamesASecondPartOfAFileThatAlsoAnswers(t *testing.T) {
+	// given
+	// ... a large file with the answer at its start and again two chunks down
+	filler := strings.Repeat("// padding line for the chunker\n", searchChunkBytes/32)
+	content := strings.Repeat("// drag drag winner\n", 20) + filler + filler + "func onDrop() { drag winner }\n"
+	dir := project(t, map[string]string{"gantt.go": content})
+	s := searchWith(t, dir, &fakeJev{})
+
+	// when
+	// ... the model searches for the keyword
+	out, err := s.Run(context.Background(), searchInputJSON("where is a drag dropped", []string{"drag"}, ""))
+
+	// then
+	// ... the result points at the start and names the later part too
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := strings.Count(content, "\n")
+	want := fmt.Sprintf("-%d at 0.90]", last)
+	if !strings.Contains(out, "gantt.go:1-") || !strings.Contains(out, "[Jev relevance 0.90; also ") || !strings.Contains(out, want) {
+		t.Errorf("want gantt.go from line 1, also naming the part ending at line %d:\n%s", last, out)
+	}
+}
+
+func TestSearchKeepsItsFirstRankingWhenTheSecondPassFails(t *testing.T) {
+	// given
+	// ... a large file whose start answers the query, and a Jev that
+	// ... refuses the part of it only the second pass sends
+	filler := strings.Repeat("// padding line for the chunker\n", searchChunkBytes/32)
+	content := strings.Repeat("// drag drag winner\n", 20) + filler + filler + "func onDrop() { drag unscorable }\n"
+	dir := project(t, map[string]string{"gantt.go": content})
+	s := searchWith(t, dir, &fakeJev{refuse: "unscorable"})
+
+	// when
+	// ... the model searches for the keyword
+	out, err := s.Run(context.Background(), searchInputJSON("where is a drag dropped", []string{"drag"}, ""))
+
+	// then
+	// ... the first pass's result stands, and the output says the second failed
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"gantt.go:1-", "[Jev relevance 0.90]", "Second pass unavailable: Jev HTTP 500. Ranges and scores are from the first pass."} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestSearchRetriesWhenRateLimited(t *testing.T) {
 	// given
 	// ... Jev rate-limits the first request
@@ -407,7 +489,7 @@ func TestSearchWithNoCandidatesSaysSoWithoutCallingJev(t *testing.T) {
 }
 
 func TestSearchRejectsInvalidInput(t *testing.T) {
-	s := NewSearch(t.TempDir(), "k", "m")
+	s := NewSearch(t.TempDir(), "k", "m", false)
 	for _, input := range []string{`{}`, `{"query":"  "}`, `{"query":"x","extra":1}`, `{"query":"x","terms":[""]}`, `{"query":"is it"}`} {
 		if _, err := s.Run(context.Background(), json.RawMessage(input)); err == nil {
 			t.Errorf("input %s: want an error", input)
@@ -433,7 +515,7 @@ func TestShortlistFavoursRareTermsPathsAndCodeOverTests(t *testing.T) {
 
 	// when
 	// ... the shortlist is chosen for a query mixing a rare and generic terms
-	selected := selectSearchChunks(files, searchInput{Terms: []string{"search", "api", "text"}})
+	selected := selectSearchChunks(files, searchInput{Terms: []string{"search", "api", "text"}}, nil)
 
 	// then
 	// ... the implementation ranks first and the test below it

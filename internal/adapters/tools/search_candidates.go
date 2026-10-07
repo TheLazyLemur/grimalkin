@@ -19,7 +19,7 @@ import (
 
 const (
 	maxSearchPaths     = 10_000
-	maxSearchScanBytes = 16 * 1024 * 1024
+	maxSearchScanBytes = 64 * 1024 * 1024
 	maxSearchFileBytes = 256 * 1024
 	searchChunkBytes   = 8 * 1024
 )
@@ -72,14 +72,37 @@ func (b *searchPathOutput) Write(p []byte) (int, error) {
 	return b.Buffer.Write(p)
 }
 
-func searchCandidates(ctx context.Context, cwd string, root *os.Root, in searchInput) ([]searchChunk, searchStats, error) {
-	stats := searchStats{}
+// searchCandidates returns the shortlist, one chunk per file, and every chunk
+// of each shortlisted file so the top results can be searched within.
+func searchCandidates(ctx context.Context, cwd string, root *os.Root, in searchInput, mapScores map[string]searchMapScore) ([]searchChunk, map[string][]searchChunk, searchStats, error) {
 	// The glob is applied here rather than passed to rg: an rg --glob
 	// overrides .gitignore, which would pull in node_modules and build output.
 	var glob *regexp.Regexp
 	if in.Glob != "" {
 		glob = searchGlob(in.Glob)
 	}
+	files, stats, err := searchReadFiles(ctx, cwd, root, glob)
+	if err != nil {
+		return nil, nil, stats, err
+	}
+	selected := selectSearchChunks(files, in, mapScores)
+	chosen := map[string]bool{}
+	for _, c := range selected {
+		chosen[c.Path] = true
+	}
+	all := map[string][]searchChunk{}
+	for _, f := range files {
+		if chosen[f.name] {
+			all[f.name] = f.chunks
+		}
+	}
+	return selected, all, stats, nil
+}
+
+// searchReadFiles lists the project with rg (so .gitignore holds) and reads
+// every file search may send, split into chunks.
+func searchReadFiles(ctx context.Context, cwd string, root *os.Root, glob *regexp.Regexp) ([]searchFile, searchStats, error) {
+	stats := searchStats{}
 	args := []string{"--no-config", "--files", "--null", "--", "."}
 	cmd := exec.CommandContext(ctx, "rg", args...)
 	cmd.Dir = cwd
@@ -150,7 +173,7 @@ func searchCandidates(ctx context.Context, cwd string, root *os.Root, in searchI
 		stats.Read++
 		read = append(read, searchFile{name: name, chunks: splitSearchFile(name, string(b))})
 	}
-	return selectSearchChunks(read, in), stats, nil
+	return read, stats, nil
 }
 
 type searchFile struct {
@@ -164,7 +187,12 @@ type searchFile struct {
 // (so "api" or "text" can't outvote "search"), repeats saturate, and a term in
 // the path adds its rarity among paths. Tests and docs are discounted unless the query asks
 // for them, so they can't crowd out the code that implements the behaviour.
-func selectSearchChunks(files []searchFile, in searchInput) []searchChunk {
+//
+// mapScores, from the repo map, name files whose concepts match the query
+// whether or not they share its words. Up to searchMapSlots of the file budget
+// go to the best of those the keywords didn't pick; places the map doesn't
+// fill go back to the keywords.
+func selectSearchChunks(files []searchFile, in searchInput, mapScores map[string]searchMapScore) []searchChunk {
 	stems := make([]string, len(in.Terms))
 	for i, term := range in.Terms {
 		stems[i] = searchStem(term)
@@ -200,6 +228,7 @@ func selectSearchChunks(files []searchFile, in searchInput) []searchChunk {
 	wantDocs := slices.ContainsFunc(stems, func(s string) bool { return strings.HasPrefix(s, "doc") || s == "readme" || s == "plan" })
 
 	var best []searchChunk
+	var mapOnly []searchChunk
 	for i, f := range files {
 		path := strings.ToLower(f.name)
 		weight := 1.0
@@ -230,23 +259,70 @@ func selectSearchChunks(files []searchFile, in searchInput) []searchChunk {
 				top = j
 			}
 		}
-		if top >= 0 {
-			best = append(best, files[i].chunks[top])
+		m, mapped := mapScores[f.name]
+		switch {
+		case top >= 0:
+			c := files[i].chunks[top]
+			if mapped {
+				c.Via = m.Concepts
+			}
+			best = append(best, c)
+		case mapped && len(f.chunks) > 0:
+			// No keyword in it at all: the map is the only way it gets in.
+			c := f.chunks[0]
+			c.Via = m.Concepts
+			c.Lexical = m.Score
+			c.MapOnly = true
+			mapOnly = append(mapOnly, c)
 		}
 	}
 	sort.SliceStable(best, func(i, j int) bool { return best[i].Lexical > best[j].Lexical })
-	var selected []searchChunk
-	sentBytes := 0
-	for _, c := range best {
-		if len(selected) == searchFiles {
-			break
+
+	// The map's picks, best first: keyword candidates beyond the keyword
+	// quota as well as files with no keyword at all.
+	quota := searchFiles
+	if len(mapScores) > 0 {
+		quota = max(searchFiles-searchMapSlots, 0)
+	}
+	var mapPicks []searchChunk
+	for i, c := range best {
+		if i >= quota && c.Via != "" {
+			c.Lexical = mapScores[c.Path].Score
+			mapPicks = append(mapPicks, c)
 		}
-		if sentBytes+len(c.Content) > searchBytes {
-			continue
+	}
+	mapPicks = append(mapPicks, mapOnly...)
+	sort.SliceStable(mapPicks, func(i, j int) bool { return mapPicks[i].Lexical > mapPicks[j].Lexical })
+
+	var selected []searchChunk
+	chosen := map[string]bool{}
+	sentBytes := 0
+	take := func(c searchChunk) {
+		if chosen[c.Path] || sentBytes+len(c.Content) > searchBytes {
+			return
 		}
 		selected = append(selected, c)
+		chosen[c.Path] = true
 		sentBytes += len(c.Content)
 	}
+	keywords := func(limit int) {
+		for _, c := range best {
+			if len(selected) >= limit {
+				break
+			}
+			c.Via = "" // the keywords picked it
+			take(c)
+		}
+	}
+	keywords(quota)
+	mapLimit := min(len(selected)+searchMapSlots, searchFiles)
+	for _, c := range mapPicks {
+		if len(selected) >= mapLimit {
+			break
+		}
+		take(c)
+	}
+	keywords(searchFiles)
 	return selected
 }
 

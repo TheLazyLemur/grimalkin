@@ -183,7 +183,7 @@ func TestASearchBlockCanNameItsModel(t *testing.T) {
 	// given
 	// ... a search block pinning a model version
 	c := validConfig()
-	c["search"] = raw{"apiKey": "jev-1", "model": "jev-1.13.0"}
+	c["search"] = raw{"apiKey": "jev-1", "model": "jev-1.13.0", "map": true, "mapAtStartup": true}
 	path := writeConfig(t, c)
 
 	// when
@@ -195,8 +195,42 @@ func TestASearchBlockCanNameItsModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sel.Search == nil || sel.Search.Model != "jev-1.13.0" {
-		t.Errorf("search = %+v, want model jev-1.13.0", sel.Search)
+	if sel.Search == nil || sel.Search.Model != "jev-1.13.0" || !sel.Search.Map || !sel.Search.MapAtStartup {
+		t.Errorf("search = %+v, want model jev-1.13.0 with the map on, built at startup", sel.Search)
+	}
+}
+
+func TestWithoutAJevKeyThereIsNoSearchButGrimalkinStillStarts(t *testing.T) {
+	cases := []struct {
+		name   string
+		search raw
+		want   string
+	}{
+		{"no apiKey", raw{"model": "jev-latest"}, `search: off (no "apiKey")`},
+		{"failing key command", raw{"apiKey": "!exit 4"}, "search: off (api key command: exit status 4)"},
+		{"silent key command", raw{"apiKey": "!true"}, "search: off (api key command printed nothing)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// given
+			// ... a search block with no usable key
+			c := validConfig()
+			c["search"] = tc.search
+			path := writeConfig(t, c)
+
+			// when
+			// ... it is loaded
+			sel, err := Load(path)
+
+			// then
+			// ... loading succeeds without search, and says why
+			if err != nil {
+				t.Fatal(err)
+			}
+			if sel.Search != nil || sel.SearchOff != tc.want {
+				t.Errorf("search = %+v, off = %q, want none and %q", sel.Search, sel.SearchOff, tc.want)
+			}
+		})
 	}
 }
 
@@ -229,9 +263,8 @@ func TestInvalidConfigsAreRejected(t *testing.T) {
 		{"unknown model key", func(c raw) { c.model("anthropic", "haiku")["thinkng"] = "x" }, `unknown field "thinkng"`},
 		{"failing key command", func(c raw) { c.provider("ollama")["apiKey"] = "!exit 3" }, `providers.ollama: api key command: exit status 3`},
 		{"empty skill dir", func(c raw) { c["skillDirs"] = []any{"a", ""} }, `skillDirs[1] is empty`},
-		{"search without apiKey", func(c raw) { c["search"] = raw{"model": "jev-latest"} }, `search: missing "apiKey"`},
+		{"map at startup without the map", func(c raw) { c["search"] = raw{"apiKey": "k", "mapAtStartup": true} }, `search: "mapAtStartup" needs "map": true`},
 		{"unknown search key", func(c raw) { c["search"] = raw{"apiKey": "k", "baseUrl": "x"} }, `unknown field "baseUrl"`},
-		{"failing search key command", func(c raw) { c["search"] = raw{"apiKey": "!exit 4"} }, `search: api key command: exit status 4`},
 		{"silent key command", func(c raw) { c.provider("ollama")["apiKey"] = "!true" }, `providers.ollama: api key command printed nothing`},
 	}
 	for _, tc := range cases {

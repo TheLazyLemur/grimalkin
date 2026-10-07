@@ -39,6 +39,10 @@ type Selection struct {
 	// leading ~ and relative paths are left to the caller. Earlier wins.
 	SkillDirs []string
 
+	// SearchOff says why a configured search block gave no search tool: no
+	// key, or a key command that failed or printed nothing. Empty otherwise.
+	SearchOff string
+
 	// Search configures the search tool. Nil when the config has no search
 	// block, and the tool is left out.
 	Search *Search
@@ -48,6 +52,11 @@ type Selection struct {
 type Search struct {
 	APIKey string
 	Model  string
+	// Map turns on the prototype repo map, built in memory in the background.
+	Map bool
+	// MapAtStartup builds the map when grimalkin starts, not at the first
+	// search. Only with Map.
+	MapAtStartup bool
 }
 
 // DefaultSearchModel is used when the search block names no model.
@@ -63,8 +72,10 @@ type file struct {
 }
 
 type search struct {
-	APIKey string `json:"apiKey"`
-	Model  string `json:"model"`
+	APIKey       string `json:"apiKey"`
+	Model        string `json:"model"`
+	Map          bool   `json:"map"`
+	MapAtStartup bool   `json:"mapAtStartup"`
 }
 
 type provider struct {
@@ -136,8 +147,8 @@ func (f file) resolve() (Selection, error) {
 		}
 	}
 
-	if f.Search != nil && f.Search.APIKey == "" {
-		return Selection{}, errors.New(`search: missing "apiKey"`)
+	if f.Search != nil && f.Search.MapAtStartup && !f.Search.Map {
+		return Selection{}, errors.New(`search: "mapAtStartup" needs "map": true`)
 	}
 
 	p, ok := f.Providers[f.Provider]
@@ -168,17 +179,27 @@ func (f file) resolve() (Selection, error) {
 	if err != nil {
 		return Selection{}, fmt.Errorf("providers.%s: %w", f.Provider, err)
 	}
+	// Search is optional: without a key the model simply doesn't get the
+	// tool, and the reason is reported rather than refusing to start.
 	var searchSel *Search
+	var searchOff string
 	if f.Search != nil {
-		searchKey, err := resolveKey(f.Search.APIKey)
+		var searchKey string
+		var err error
+		if f.Search.APIKey == "" {
+			err = errors.New(`no "apiKey"`)
+		} else {
+			searchKey, err = resolveKey(f.Search.APIKey)
+		}
 		if err != nil {
-			return Selection{}, fmt.Errorf("search: %w", err)
+			searchOff = fmt.Sprintf("search: off (%v)", err)
+		} else {
+			model := f.Search.Model
+			if model == "" {
+				model = DefaultSearchModel
+			}
+			searchSel = &Search{APIKey: searchKey, Model: model, Map: f.Search.Map, MapAtStartup: f.Search.MapAtStartup}
 		}
-		model := f.Search.Model
-		if model == "" {
-			model = DefaultSearchModel
-		}
-		searchSel = &Search{APIKey: searchKey, Model: model}
 	}
 	return Selection{
 		Provider:  f.Provider,
@@ -190,6 +211,7 @@ func (f file) resolve() (Selection, error) {
 		Effort:    effort,
 		SkillDirs: f.SkillDirs,
 		Search:    searchSel,
+		SearchOff: searchOff,
 	}, nil
 }
 

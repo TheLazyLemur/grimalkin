@@ -30,7 +30,9 @@ scripts/check-imports.sh  enforces the import rules
 
 **Ports.** The core's outbound ports live in `internal/core/ports.go`. The TUI
 defines the ports it consumes (`tui.Agent`, satisfied by `*core.Agent`, and
-`tui.Clipboard`), since Go interfaces belong with their users.
+`tui.Clipboard`, and `tui.RepoMap`, the repo map's state for the status bar
+and its `/index` command, satisfied by `*tools.Search`), since Go interfaces
+belong with their users.
 
 **Events.** The core reports a turn to `Transcript` as events
 (`internal/core/events.go`): reply started, reply text, tool started, tool
@@ -52,10 +54,33 @@ rarity among paths when the path holds it, and discounts tests and docs.
 Shortlist recall against labelled questions (`example/benchmark.json`, or
 your own for other repos, kept out of this one) is measured offline by
 `TestSearchShortlistRecall` (see its comment); no file missed by
-the shortlist can be ranked by Jev. The model's `glob` is matched in Go,
-not passed to rg, because an rg `--glob` overrides `.gitignore`. If Jev fails,
+the shortlist can be ranked by Jev. The model's `glob` is matched in Go, not
+passed to rg, because an rg `--glob` overrides `.gitignore`. If Jev fails,
 the tool returns the keyword matches and the reason rather than an error, and
 never echoes Jev's error bodies. Tests run against a fake Jev on `httptest`.
+
+After ranking, a second pass scores up to 40 more excerpts of the
+shortlisted files (those with the most keywords) and moves each file to its
+best excerpt, so a large file's range points at the part that answers the
+query. A file whose first excerpt scored low can rise this way. If the
+second pass fails or runs out of time, the first ranking stands and the
+output says so.
+
+The repo map (`search_map.go`, behind `"map": true`) is a prototype. It is
+built once per session in a goroutine and never refreshed or saved. In a git
+repository the first search starts it, or `main.go` does with
+`"mapAtStartup": true`; elsewhere only `/index` does, which the TUI handles
+itself and never sends to the model. `/index` also rebuilds a map that
+failed. Each file's tags come from one Jev request (a role Choice and a
+concept Choice over up to 120 words harvested from paths and file contents,
+leaving out words in more than two fifths of either). A Choice answer is
+rejected unless its pick and its distribution's keys are options that were
+sent, since both are printed for the model. A build in which most files fail
+is failed; one that runs out of time keeps what it tagged. A search's query
+gets a concept Choice too, within five seconds, and files are scored by the
+product of the two distributions. Up to 15 of the 60 shortlist places go to
+the map's picks, the rest going back to the keywords, and up to five of
+those picks that Jev scores at least 0.5 are listed even below the top ten.
 
 **Skills.** The `Skills` port lists skills and renders one; the adapter does
 all file and shell I/O. The core owns the rest: the catalog in the system

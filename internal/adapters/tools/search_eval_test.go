@@ -48,7 +48,7 @@ func TestSearchShortlistRecall(t *testing.T) {
 			if err != nil {
 				t.Fatal(q.ID, err)
 			}
-			candidates, _, err := searchCandidates(context.Background(), dir, root, in)
+			candidates, _, _, err := searchCandidates(context.Background(), dir, root, in, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

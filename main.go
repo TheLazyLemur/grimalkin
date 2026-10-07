@@ -22,13 +22,16 @@ import (
 var maxTokens = 32_000
 
 // toolCatalogue is every tool the model gets. search joins the shell when the
-// config has a search block, and is then available in every project.
-func toolCatalogue(sel config.Selection, cwd string) []core.Tool {
+// config has a search block, and is then available in every project. The
+// search tool is returned too (nil without one), for its repo map.
+func toolCatalogue(sel config.Selection, cwd string) ([]core.Tool, *tools.Search) {
 	catalogue := []core.Tool{tools.Shell{}}
+	var search *tools.Search
 	if sel.Search != nil {
-		catalogue = append(catalogue, tools.NewSearch(cwd, sel.Search.APIKey, sel.Search.Model))
+		search = tools.NewSearch(cwd, sel.Search.APIKey, sel.Search.Model, sel.Search.Map)
+		catalogue = append(catalogue, search)
 	}
-	return catalogue
+	return catalogue, search
 }
 
 func main() {
@@ -62,6 +65,7 @@ func run() error {
 	}
 
 	store := tui.NewStore()
+	catalogue, search := toolCatalogue(sel, cwd)
 	agent := &core.Agent{
 		Model: anthropic.New(anthropic.Config{
 			BaseURL:   sel.BaseURL,
@@ -73,7 +77,7 @@ func run() error {
 		}),
 		Transcript: store,
 		System:     core.SystemPrompt(osName(), cwd, library.List()),
-		Tools:      toolCatalogue(sel, cwd),
+		Tools:      catalogue,
 		Skills:     library,
 	}
 
@@ -90,13 +94,35 @@ func run() error {
 		}
 		store.AddInfo("skills: " + strings.Join(names, ", "))
 	}
+	if sel.SearchOff != "" {
+		store.AddInfo(sel.SearchOff)
+	}
 	if sel.Search != nil {
-		store.AddInfo("search: on · " + sel.Search.Model + " · sends excerpts of keyword-matched files to TypeSafe")
+		info := "search: on · " + sel.Search.Model + " · sends excerpts of shortlisted files to TypeSafe"
+		switch {
+		case sel.Search.Map && !search.MapBuildsUnasked():
+			info += " · repo map: not a git repository, so /index builds it"
+		case sel.Search.MapAtStartup:
+			info += " · repo map building in the background: sends the start of every code and config file"
+		case sel.Search.Map:
+			info += " · repo map on: the first search sends the start of every code and config file"
+		}
+		store.AddInfo(info)
+		if sel.Search.MapAtStartup {
+			// Build the repo map now, so it is likely ready by the first
+			// search. After the line above, so nothing is sent unannounced.
+			search.StartMap()
+		}
 	}
 	for _, w := range warnings {
 		store.AddInfo(w)
 	}
-	return tui.Run(agent, store, clipboard.Clipboard{}, label)
+	// The repo map's progress shows in the status bar, and /index builds it.
+	var repoMap tui.RepoMap
+	if search != nil && sel.Search.Map {
+		repoMap = search
+	}
+	return tui.Run(agent, store, clipboard.Clipboard{}, label, repoMap)
 }
 
 func osName() string {

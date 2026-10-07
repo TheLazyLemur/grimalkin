@@ -34,12 +34,18 @@ type Search struct {
 	key      string
 	model    string
 	endpoint string
+	mapOn    bool
+	git      bool // root is inside a git work tree
+	repoMap  searchMap
 }
 
 // NewSearch makes search available in every project, without a repo allowlist.
 // Credentials come from the application config, never from repository files.
-func NewSearch(root, key, model string) *Search {
-	return &Search{root: root, key: key, model: model, endpoint: "https://api.typesafe.ai/v1/systemone"}
+// With repoMap, the repo map is built in the background (see search_map.go):
+// in a git repository by StartMap or the first search, elsewhere only by
+// Index.
+func NewSearch(root, key, model string, repoMap bool) *Search {
+	return &Search{root: root, key: key, model: model, endpoint: "https://api.typesafe.ai/v1/systemone", mapOn: repoMap, git: searchInGitRepo(root)}
 }
 
 func (*Search) Spec() core.ToolSpec { return searchSpec }
@@ -116,11 +122,67 @@ type searchChunk struct {
 	Content     string
 	Lexical     float64
 	Score       float64
+	Via         string // the map's concepts, when the map put it on the shortlist
+	MapOnly     bool   // no keyword in the file: only the map put it there
 }
 
 type searchStats struct {
 	Listed, Read, Skipped int
 	Limited               bool
+}
+
+// searchRefineChunks caps the extra excerpts scored in the second pass. A
+// variable so tests can shrink it.
+var searchRefineChunks = 40
+
+// refine is a second pass within the shortlisted files. Keywords chose one
+// excerpt of each for Jev; a large file's answer can sit in another. The
+// shortlisted files' other excerpts with the most keywords are scored too,
+// and each file moves to its best excerpt, so a file whose first excerpt
+// scored low can still rise. A second excerpt scoring at least 0.5 goes in
+// also. On error the candidates keep their first scores. It returns how many
+// excerpts it sent.
+func (s *Search) refine(ctx context.Context, query string, candidates []searchChunk, fileChunks map[string][]searchChunk, also map[string]searchChunk) (int, error) {
+	index := map[string]int{}
+	for i, c := range candidates {
+		index[c.Path] = i
+	}
+	var extra []searchChunk
+	for i, c := range candidates {
+		for _, chunk := range fileChunks[c.Path] {
+			if chunk.First != candidates[i].First && chunk.Lexical > 0 {
+				extra = append(extra, chunk)
+			}
+		}
+	}
+	sort.SliceStable(extra, func(i, j int) bool { return extra[i].Lexical > extra[j].Lexical })
+	if len(extra) > searchRefineChunks {
+		extra = extra[:searchRefineChunks]
+	}
+	if len(extra) == 0 {
+		return 0, nil
+	}
+	if _, err := s.rank(ctx, query, extra); err != nil {
+		return len(extra), err
+	}
+	second := map[string]searchChunk{}
+	for _, e := range extra {
+		c := &candidates[index[e.Path]]
+		e.Via = c.Via
+		switch {
+		case e.Score > c.Score:
+			second[e.Path] = *c
+			*c = e
+		case e.Score > second[e.Path].Score:
+			second[e.Path] = e
+		}
+	}
+	for path, e := range second {
+		if e.Score >= 0.5 {
+			also[path] = e
+		}
+	}
+	return len(extra), nil
 }
 
 func (s *Search) Run(ctx context.Context, input json.RawMessage) (string, error) {
@@ -131,6 +193,7 @@ func (s *Search) Run(ctx context.Context, input json.RawMessage) (string, error)
 	if s.key == "" || s.model == "" {
 		return "", errors.New("search is missing Jev credentials; configure search.apiKey or use ripgrep via shell")
 	}
+	caller := ctx
 	ctx, cancel := context.WithTimeout(ctx, searchTimeout)
 	defer cancel()
 	start := time.Now()
@@ -139,7 +202,18 @@ func (s *Search) Run(ctx context.Context, input json.RawMessage) (string, error)
 		return "", fmt.Errorf("search: open project: %w", err)
 	}
 	defer root.Close()
-	candidates, stats, err := searchCandidates(ctx, s.root, root, in)
+	var mapScores map[string]searchMapScore
+	var roles map[string]string
+	var mapErr error
+	var mapStatus string
+	if s.mapOn {
+		s.StartMap()
+		// Read before the lookup, so it says what this search used even if
+		// the map finishes while it runs.
+		mapStatus = s.mapStatus()
+		mapScores, roles, _, mapErr = s.mapScores(ctx, in)
+	}
+	candidates, fileChunks, stats, err := searchCandidates(ctx, s.root, root, in, mapScores)
 	if err != nil {
 		return "", fmt.Errorf("search: %w; fall back to ripgrep via shell", err)
 	}
@@ -148,30 +222,66 @@ func (s *Search) Run(ctx context.Context, input json.RawMessage) (string, error)
 	}
 	// Preserve a few lexical hits so semantic ranking cannot hide every keyword hit.
 	lexical := append([]searchChunk(nil), candidates...)
-	usage, rankErr := s.rank(ctx, in.Query, candidates)
+	_, rankErr := s.rank(ctx, in.Query, candidates)
 	if ctx.Err() != nil {
 		return "", ctx.Err()
 	}
+	also := map[string]searchChunk{}
+	refined := 0
+	var refineErr error
 	if rankErr == nil {
 		sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].Score > candidates[j].Score })
+		// Keywords chose which excerpt of each file Jev saw. Score other
+		// excerpts of the shortlisted files too, so the range shown is the
+		// part that answers the query, not the part with the most keywords.
+		// The first ranking stands if this pass fails or runs out of time.
+		refined, refineErr = s.refine(ctx, in.Query, candidates, fileChunks, also)
+		if caller.Err() != nil {
+			return "", caller.Err()
+		}
+		if refineErr == nil {
+			sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].Score > candidates[j].Score })
+		}
 	}
 	var out strings.Builder
 	fmt.Fprintf(&out, "Search: %s\nKeyword shortlist: %s\n", in.Query, strings.Join(in.Terms, ", "))
+	if s.mapOn {
+		out.WriteString(mapStatus + "\n")
+		if mapErr != nil {
+			fmt.Fprintf(&out, "Repo map lookup failed: %v; keywords only.\n", mapErr)
+		}
+	}
 	if rankErr != nil {
 		fmt.Fprintf(&out, "Jev ranking unavailable: %v. Showing local keyword matches only; use ripgrep and shell if these are insufficient.\n", rankErr)
 	}
-	// At most ten semantic files plus five lexical files, one best range per file.
+	if refineErr != nil {
+		fmt.Fprintf(&out, "Second pass unavailable: %v. Ranges and scores are from the first pass.\n", refineErr)
+	}
+	// At most ten semantic files, five more the map found and five lexical
+	// files, one best range per file.
 	seen := map[string]bool{}
 	add := func(c searchChunk, local bool) {
 		if seen[c.Path] {
 			return
 		}
 		seen[c.Path] = true
-		if local {
-			fmt.Fprintf(&out, "%s:%d-%d [keyword match]\n", c.Path, c.First, c.Last)
-		} else {
-			fmt.Fprintf(&out, "%s:%d-%d [Jev relevance %.2f]\n", c.Path, c.First, c.Last, c.Score)
+		note := "keyword match"
+		switch {
+		case !local:
+			note = fmt.Sprintf("Jev relevance %.2f", c.Score)
+		case c.MapOnly:
+			note = "map match"
 		}
+		if role := roles[c.Path]; role != "" {
+			note += "; " + role
+		}
+		if c.Via != "" {
+			note += "; via map: " + c.Via
+		}
+		if a, ok := also[c.Path]; ok && !local {
+			note += fmt.Sprintf("; also %d-%d at %.2f", a.First, a.Last, a.Score)
+		}
+		fmt.Fprintf(&out, "%s:%d-%d [%s]\n", c.Path, c.First, c.Last, note)
 	}
 	for _, c := range candidates {
 		if len(seen) == 10 {
@@ -179,9 +289,24 @@ func (s *Search) Run(ctx context.Context, input json.RawMessage) (string, error)
 		}
 		add(c, rankErr != nil)
 	}
+	// Files only the map found rarely beat the keyword picks on relevance,
+	// so the best few get their own place rather than vanishing below the
+	// top ten.
+	if rankErr == nil {
+		viaMap := 0
+		for _, c := range candidates {
+			if viaMap == 5 || c.Score < 0.5 {
+				break
+			}
+			if c.Via != "" && !seen[c.Path] {
+				add(c, false)
+				viaMap++
+			}
+		}
+	}
 	localFiles := map[string]bool{}
 	for _, c := range lexical {
-		if localFiles[c.Path] {
+		if localFiles[c.Path] || c.MapOnly {
 			continue
 		}
 		localFiles[c.Path] = true
@@ -190,15 +315,10 @@ func (s *Search) Run(ctx context.Context, input json.RawMessage) (string, error)
 			break
 		}
 	}
-	fmt.Fprintf(&out, "\n%d files inspected; %d skipped; %d excerpts selected. Elapsed %.2fs.\n", stats.Read, stats.Skipped, len(candidates), time.Since(start).Seconds())
-	if rankErr == nil {
-		fmt.Fprintf(&out, "Jev: %d input tokens, %d output tokens; estimated $%.5f at $0.042/M input tokens (output free; verify your model's pricing).\n", usage.Input, usage.Output, float64(usage.Input)*0.042/1e6)
-	} else {
-		out.WriteString("Partial/failed requests may have incurred charges; complete token usage unavailable.\n")
-	}
+	fmt.Fprintf(&out, "\n%d files inspected; %d skipped; %d excerpts sent, and %d more in the second pass. Elapsed %.2fs.\n", stats.Read, stats.Skipped, len(candidates), refined, time.Since(start).Seconds())
 	if stats.Limited {
 		out.WriteString("Local scan reached its file/byte limit; narrow glob or use ripgrep via shell.\n")
 	}
-	out.WriteString("Only a bounded keyword shortlist was sent, not the whole repository. Read the listed ranges with shell. If this misses what you need, fall back to ripgrep and shell.")
+	out.WriteString("Only a bounded shortlist was sent for this search, not the whole repository. Read the listed ranges with shell. If this misses what you need, fall back to ripgrep and shell.")
 	return out.String(), nil
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -19,20 +20,39 @@ type Clipboard interface {
 	Copy(text string)
 }
 
-func Run(agent Agent, store *Store, clipboard Clipboard, modelName string) error {
+// RepoMap is the search tool's repo map as the UI sees it. Indicator is a
+// short piece of state for the status bar, such as the build's progress: the
+// TUI polls it every second while live is true, and an empty text shows
+// nothing. Index builds the map because the user typed /index, and returns a
+// line to show them.
+type RepoMap interface {
+	Indicator() (text string, live bool)
+	Index() string
+}
+
+// indexCommand builds the repo map. The UI handles it: it never reaches the
+// model.
+const indexCommand = "/index"
+
+// indicatorPoll is how often a live indicator is read.
+const indicatorPoll = time.Second
+
+// Run starts the UI. repoMap may be nil.
+func Run(agent Agent, store *Store, clipboard Clipboard, modelName string, repoMap RepoMap) error {
 	if agent == nil || store == nil || clipboard == nil {
 		panic("tui ports not wired")
 	}
-	_, err := tea.NewProgram(newModel(agent, store, clipboard, modelName)).Run()
+	_, err := tea.NewProgram(newModel(agent, store, clipboard, modelName, repoMap)).Run()
 	return err
 }
 
-func newModel(agent Agent, store *Store, clipboard Clipboard, modelName string) *model {
+func newModel(agent Agent, store *Store, clipboard Clipboard, modelName string, repoMap RepoMap) *model {
 	m := &model{
 		agent:     agent,
 		store:     store,
 		clipboard: clipboard,
 		modelName: modelName,
+		repoMap:   repoMap,
 		styles:    map[[2]attr]lipgloss.Style{},
 	}
 	m.editor.reset()
@@ -50,11 +70,16 @@ type storeChangedMsg struct{}
 
 type turnFinishedMsg struct{}
 
+type indicatorTickMsg struct{}
+
 type model struct {
 	agent     Agent
 	store     *Store
 	clipboard Clipboard
 	modelName string
+	repoMap   RepoMap
+
+	indicatorText string
 
 	editor     editor
 	transcript transcriptView
@@ -74,7 +99,21 @@ type model struct {
 }
 
 func (m *model) Init() tea.Cmd {
-	return m.waitForStoreChange()
+	if m.repoMap == nil {
+		return m.waitForStoreChange()
+	}
+	return tea.Batch(m.waitForStoreChange(), m.readIndicator())
+}
+
+// readIndicator reads the indicator now and, while it is live, again every
+// indicatorPoll.
+func (m *model) readIndicator() tea.Cmd {
+	text, live := m.repoMap.Indicator()
+	m.indicatorText = text
+	if !live {
+		return nil
+	}
+	return tea.Tick(indicatorPoll, func(time.Time) tea.Msg { return indicatorTickMsg{} })
 }
 
 func (m *model) waitForStoreChange() tea.Cmd {
@@ -93,6 +132,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd = m.waitForStoreChange()
 	case turnFinishedMsg:
 		m.busy = false
+	case indicatorTickMsg:
+		cmd = m.readIndicator()
 	case tea.PasteMsg:
 		if m.focus == focusInput && m.editor.mode == modeInsert {
 			text := strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(msg.Content)
@@ -255,6 +296,10 @@ func (m *model) send() tea.Cmd {
 		return nil
 	}
 	prompt := string(m.editor.text)
+	if strings.TrimSpace(prompt) == indexCommand {
+		m.editor.reset()
+		return m.index()
+	}
 	m.editor.reset()
 	m.store.addUser(prompt)
 	m.busy = true
@@ -263,6 +308,16 @@ func (m *model) send() tea.Cmd {
 		agent.RunTurn(prompt)
 		return turnFinishedMsg{}
 	}
+}
+
+// index builds the repo map and starts following its progress.
+func (m *model) index() tea.Cmd {
+	if m.repoMap == nil {
+		m.store.AddInfo(`index: there is no repo map · set "map": true in the config's search block`)
+		return nil
+	}
+	m.store.AddInfo(m.repoMap.Index())
+	return m.readIndicator()
 }
 
 // margin is the empty space either side of the content. It shrinks to
@@ -496,6 +551,11 @@ func (m *model) renderStatusBar() string {
 	modelLabel := styledCells(" "+m.modelName+" ", colorDim, 0)
 	if m.modelName != "" && cellsWidth(left)+cellsWidth(modelLabel)+cellsWidth(right) < width {
 		right = append(modelLabel, right...)
+	}
+	// Background state goes last: it is the first thing dropped for room.
+	indicatorLabel := styledCells(" "+m.indicatorText+" ", colorDim, 0)
+	if m.indicatorText != "" && cellsWidth(left)+cellsWidth(indicatorLabel)+cellsWidth(right) < width {
+		right = append(indicatorLabel, right...)
 	}
 	bar := left
 	for range max(0, width-cellsWidth(left)-cellsWidth(right)) {
