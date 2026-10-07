@@ -19,12 +19,17 @@ import (
 	"grimalkin/internal/core"
 )
 
-var (
-	maxTokens     = 32_000
-	toolCatalogue = []core.Tool{
-		tools.Shell{},
+var maxTokens = 32_000
+
+// toolCatalogue is every tool the model gets. search joins the shell when the
+// config has a search block, and is then available in every project.
+func toolCatalogue(sel config.Selection, cwd string) []core.Tool {
+	catalogue := []core.Tool{tools.Shell{}}
+	if sel.Search != nil {
+		catalogue = append(catalogue, tools.NewSearch(cwd, sel.Search.APIKey, sel.Search.Model))
 	}
-)
+	return catalogue
+}
 
 func main() {
 	if err := run(); err != nil {
@@ -68,7 +73,7 @@ func run() error {
 		}),
 		Transcript: store,
 		System:     core.SystemPrompt(osName(), cwd, library.List()),
-		Tools:      toolCatalogue,
+		Tools:      toolCatalogue(sel, cwd),
 		Skills:     library,
 	}
 
@@ -84,6 +89,9 @@ func run() error {
 			names[i] = s.Name
 		}
 		store.AddInfo("skills: " + strings.Join(names, ", "))
+	}
+	if sel.Search != nil {
+		store.AddInfo("search: on · " + sel.Search.Model + " · sends excerpts of keyword-matched files to TypeSafe")
 	}
 	for _, w := range warnings {
 		store.AddInfo(w)

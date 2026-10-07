@@ -157,6 +157,49 @@ func TestAKeyCommandsOutputIsTheKeyWithTrailingWhitespaceTrimmed(t *testing.T) {
 	}
 }
 
+func TestASearchBlockResolvesItsKeyAndDefaultsTheModel(t *testing.T) {
+	// given
+	// ... a search block whose key comes from a command and which names no model
+	c := validConfig()
+	c["search"] = raw{"apiKey": `!printf 'jev-1\n'`}
+	path := writeConfig(t, c)
+
+	// when
+	// ... it is loaded
+	sel, err := Load(path)
+
+	// then
+	// ... search carries the trimmed key and the default model
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := &Search{APIKey: "jev-1", Model: "jev-latest"}
+	if !reflect.DeepEqual(sel.Search, want) {
+		t.Errorf("search = %+v, want %+v", sel.Search, want)
+	}
+}
+
+func TestASearchBlockCanNameItsModel(t *testing.T) {
+	// given
+	// ... a search block pinning a model version
+	c := validConfig()
+	c["search"] = raw{"apiKey": "jev-1", "model": "jev-1.13.0"}
+	path := writeConfig(t, c)
+
+	// when
+	// ... it is loaded
+	sel, err := Load(path)
+
+	// then
+	// ... that model is used
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sel.Search == nil || sel.Search.Model != "jev-1.13.0" {
+		t.Errorf("search = %+v, want model jev-1.13.0", sel.Search)
+	}
+}
+
 func TestInvalidConfigsAreRejected(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -186,6 +229,9 @@ func TestInvalidConfigsAreRejected(t *testing.T) {
 		{"unknown model key", func(c raw) { c.model("anthropic", "haiku")["thinkng"] = "x" }, `unknown field "thinkng"`},
 		{"failing key command", func(c raw) { c.provider("ollama")["apiKey"] = "!exit 3" }, `providers.ollama: api key command: exit status 3`},
 		{"empty skill dir", func(c raw) { c["skillDirs"] = []any{"a", ""} }, `skillDirs[1] is empty`},
+		{"search without apiKey", func(c raw) { c["search"] = raw{"model": "jev-latest"} }, `search: missing "apiKey"`},
+		{"unknown search key", func(c raw) { c["search"] = raw{"apiKey": "k", "baseUrl": "x"} }, `unknown field "baseUrl"`},
+		{"failing search key command", func(c raw) { c["search"] = raw{"apiKey": "!exit 4"} }, `search: api key command: exit status 4`},
 		{"silent key command", func(c raw) { c.provider("ollama")["apiKey"] = "!true" }, `providers.ollama: api key command printed nothing`},
 	}
 	for _, tc := range cases {

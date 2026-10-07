@@ -4,15 +4,16 @@ A terminal coding agent with vim-style navigation, written in Go.
 
 grimalkin speaks the Anthropic Messages API through the official Go SDK, so it
 works with Claude or any compatible endpoint (e.g. Ollama). It renders with
-Bubble Tea and Lip Gloss and has one tool, a shell, plus
-[skills](#skills).
+Bubble Tea and Lip Gloss and has two tools, a shell and
+[search](#search), plus [skills](#skills).
 
 > **Warning:** the shell is **unsandboxed**. Every command the model chooses
 > runs as `/bin/sh -c` in the current directory, with your permissions and no
 > timeout.
 
 **Contents:** [Quick start](#quick-start) ·
-[Configuration](#configuration) · [Skills](#skills) · [Keys](#keys)
+[Configuration](#configuration) · [Search](#search) · [Skills](#skills) ·
+[Keys](#keys)
 
 Working on grimalkin itself? See [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -91,6 +92,35 @@ What to put where:
   model's effort levels, run
   `curl localhost:11434/api/show -d '{"model":"<name>","verbose":true}'` and
   look at `thinking.values`; `false` and `true` are on/off, not efforts.
+
+## Search
+
+The `search` tool finds code by meaning. It shortlists files by keyword
+locally, sends excerpts of the shortlist to TypeSafe's
+[Jev](https://docs.typesafe.ai) to score their relevance to the question, and
+returns the best files with line ranges. The model reads those with the
+shell; its tool description tells it to fall back to `rg` and the shell when
+search doesn't find what it needs.
+
+It is on in every project once the config has a `search` block:
+
+```json
+"search": {
+  "apiKey": "!sed -n 's/^JEV_API_KEY=//p' ~/.jev",
+  "model": "jev-latest"
+}
+```
+
+`apiKey` is required and works like a provider's (a leading `!` runs a
+command once at startup). `model` defaults to `jev-latest`. Without the block
+there is no search tool.
+
+> **Warning:** search sends file contents to TypeSafe, in every project. Only
+> files the keywords match are sent, at most 60 files and 384 KB per search.
+> It needs ripgrep, honours `.gitignore`, reads only source and text file
+> types, and never sends hidden files and directories, dependency and build
+> directories (`node_modules`, `vendor`, `bin`, `dist`, …), files over
+> 256 KB, binary files, or files that look like they hold a key or password.
 
 ## Skills
 

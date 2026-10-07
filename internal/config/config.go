@@ -38,7 +38,20 @@ type Selection struct {
 	// SkillDirs are the directories to load skills from, as written: a
 	// leading ~ and relative paths are left to the caller. Earlier wins.
 	SkillDirs []string
+
+	// Search configures the search tool. Nil when the config has no search
+	// block, and the tool is left out.
+	Search *Search
 }
+
+// Search is the resolved search block: the Jev key and model.
+type Search struct {
+	APIKey string
+	Model  string
+}
+
+// DefaultSearchModel is used when the search block names no model.
+const DefaultSearchModel = "jev-latest"
 
 type file struct {
 	Provider  string              `json:"provider"`
@@ -46,6 +59,12 @@ type file struct {
 	Effort    string              `json:"effort"`
 	Providers map[string]provider `json:"providers"`
 	SkillDirs []string            `json:"skillDirs"`
+	Search    *search             `json:"search"`
+}
+
+type search struct {
+	APIKey string `json:"apiKey"`
+	Model  string `json:"model"`
 }
 
 type provider struct {
@@ -117,6 +136,10 @@ func (f file) resolve() (Selection, error) {
 		}
 	}
 
+	if f.Search != nil && f.Search.APIKey == "" {
+		return Selection{}, errors.New(`search: missing "apiKey"`)
+	}
+
 	p, ok := f.Providers[f.Provider]
 	if !ok {
 		return Selection{}, fmt.Errorf("provider %q is not declared", f.Provider)
@@ -145,6 +168,18 @@ func (f file) resolve() (Selection, error) {
 	if err != nil {
 		return Selection{}, fmt.Errorf("providers.%s: %w", f.Provider, err)
 	}
+	var searchSel *Search
+	if f.Search != nil {
+		searchKey, err := resolveKey(f.Search.APIKey)
+		if err != nil {
+			return Selection{}, fmt.Errorf("search: %w", err)
+		}
+		model := f.Search.Model
+		if model == "" {
+			model = DefaultSearchModel
+		}
+		searchSel = &Search{APIKey: searchKey, Model: model}
+	}
 	return Selection{
 		Provider:  f.Provider,
 		Wire:      p.Wire,
@@ -154,6 +189,7 @@ func (f file) resolve() (Selection, error) {
 		Thinking:  thinking,
 		Effort:    effort,
 		SkillDirs: f.SkillDirs,
+		Search:    searchSel,
 	}, nil
 }
 

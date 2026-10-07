@@ -12,7 +12,8 @@ internal/core/            conversation, turn loop, tool rules, events,
                           ports (Model, Tool, Skills, Transcript)
 internal/adapters/
   anthropic/              outbound: Model port over anthropic-sdk-go
-  tools/                  outbound: tools (tools.Shell)
+  tools/                  outbound: tools (tools.Shell, tools.Search and
+                          its Jev client)
   skills/                 outbound: Skills port over SKILL.md directories,
                           rendering arguments, variables and !`cmd`
   clipboard/              outbound: tui.Clipboard via pbcopy
@@ -42,6 +43,19 @@ unknown names with an error, and caps each result at 30 KB (keeping the tail).
 
 To add a tool, add a type to `internal/adapters/tools` and list it in
 `toolCatalogue` in `main.go`.
+
+**Search.** `tools.Search` lists files with `rg --files` (so `.gitignore`
+holds), filters and keyword-scores them in Go, and sends the best excerpt of
+each of the best files to Jev's `/v1/systemone` as one Noul each. Keyword
+scoring is BM25-like (rare terms weigh more, repeats saturate), adds a term's
+rarity among paths when the path holds it, and discounts tests and docs.
+Shortlist recall against labelled questions (`example/benchmark.json`, or
+your own for other repos, kept out of this one) is measured offline by
+`TestSearchShortlistRecall` (see its comment); no file missed by
+the shortlist can be ranked by Jev. The model's `glob` is matched in Go,
+not passed to rg, because an rg `--glob` overrides `.gitignore`. If Jev fails,
+the tool returns the keyword matches and the reason rather than an error, and
+never echoes Jev's error bodies. Tests run against a fake Jev on `httptest`.
 
 **Skills.** The `Skills` port lists skills and renders one; the adapter does
 all file and shell I/O. The core owns the rest: the catalog in the system
