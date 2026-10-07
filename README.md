@@ -116,8 +116,8 @@ startup). `model` defaults to `jev-latest`. Without the block there is no
 search tool. Nor is there one when the block has no key, or its key command
 fails or prints nothing: grimalkin still starts, and an info line says why.
 
-`"map": true` turns on the repo map, a prototype kept in memory for the
-session. It is built in the background: Jev tags every code and config file
+`"map": true` turns on the repo map, a prototype. It is built in the
+background: Jev tags every code and config file
 search may send (not tests or docs, up to 3,000) with its role and the
 concepts it is about, drawn from the repo's own folder and identifier names.
 Later searches map the query onto those concepts and add matching files to
@@ -127,16 +127,25 @@ with their role. A search before the map is ready uses keywords only.
 In a git repository the map starts at the first search, or at startup with
 `"mapAtStartup": true` so it is likely ready by then. Anywhere else it is
 built only when you type `/index`, which also builds it again after a build
-that failed. On a repo of about 2,000 files it takes under two minutes and
-costs about $0.17 per session: it sends the first 8 KB of every one of those
+that failed. On a repo of about 2,000 files the first build takes under two
+minutes and costs about $0.17: it sends the first 8 KB of every one of those
 files to TypeSafe. At startup, that happens whether or not you search.
+
+The map is stored in the project, in `.grimalkin/map.json`, and the
+directory ignores itself in git. Later sessions read it and send only files
+that are new or whose first 8 KB changed, so they start with the map nearly
+ready. The concepts stay as the first build chose them; `/index` on a map
+that is already built builds it from scratch, with fresh concepts. A stored
+map made for another Jev model, or holding anything a build here could not
+have written, is ignored and built again.
 
 > **Warning:** search sends file contents to TypeSafe, in every project. A
 > search sends excerpts of at most 60 files: up to 384 KB in a first pass,
 > then up to 40 more excerpts of those files (320 KB) in a second. Without
 > the repo map, only files the keywords match are sent. With it, a search
 > also sends files the map matched, and building the map sends the first
-> 8 KB of up to 3,000 files, whatever you search for.
+> 8 KB of up to 3,000 files, whatever you search for (only the new and
+> changed ones once a map is stored).
 > Search needs ripgrep, honours `.gitignore` in a git repository, reads only
 > source, config and text file types, and never sends hidden files and
 > directories, dependency and build directories (`node_modules`, `vendor`,

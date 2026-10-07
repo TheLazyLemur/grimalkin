@@ -67,11 +67,11 @@ second pass fails or runs out of time, the first ranking stands and the
 output says so.
 
 The repo map (`search_map.go`, behind `"map": true`) is a prototype. It is
-built once per session in a goroutine and never refreshed or saved. In a git
+built once per session in a goroutine. In a git
 repository the first search starts it, or `main.go` does with
 `"mapAtStartup": true`; elsewhere only `/index` does, which the TUI handles
 itself and never sends to the model. `/index` also rebuilds a map that
-failed. Each file's tags come from one Jev request (a role Choice and a
+failed, and builds a ready one from scratch. Each file's tags come from one Jev request (a role Choice and a
 concept Choice over up to 120 words harvested from paths and file contents,
 leaving out words in more than two fifths of either). A Choice answer is
 rejected unless its pick and its distribution's keys are options that were
@@ -81,6 +81,17 @@ gets a concept Choice too, within five seconds, and files are scored by the
 product of the two distributions. Up to 15 of the 60 shortlist places go to
 the map's picks, the rest going back to the keywords, and up to five of
 those picks that Jev scores at least 0.5 are listed even below the top ten.
+
+The map is stored in `.grimalkin/map.json` (`search_map_store.go`): the
+vocabulary, and each file's tags with a hash of the first chunk they were
+made from. A build reuses the tags whose hash still matches and the stored
+vocabulary, since tags made against different vocabularies can't be
+compared, and sends only the rest. It saves every 30 seconds and at the end,
+so a build that is quit, fails or runs out of time is resumed by the next.
+The file is repository content, so a clone can bring one: it is ignored
+unless its version and model match and every role, concept and vocabulary
+word is one a build could have written. Raise `searchMapVersion` when the
+roles or questions change.
 
 **Skills.** The `Skills` port lists skills and renders one; the adapter does
 all file and shell I/O. The core owns the rest: the catalog in the system

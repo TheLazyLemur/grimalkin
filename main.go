@@ -103,9 +103,9 @@ func run() error {
 		case sel.Search.Map && !search.MapBuildsUnasked():
 			info += " · repo map: not a git repository, so /index builds it"
 		case sel.Search.MapAtStartup:
-			info += " · repo map building in the background: sends the start of every code and config file"
+			info += " · repo map building in the background: sends the start of every new or changed code and config file"
 		case sel.Search.Map:
-			info += " · repo map on: the first search sends the start of every code and config file"
+			info += " · repo map on: the first search sends the start of every new or changed code and config file"
 		}
 		store.AddInfo(info)
 		if sel.Search.MapAtStartup {

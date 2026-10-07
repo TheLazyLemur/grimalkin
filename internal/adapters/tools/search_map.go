@@ -1,6 +1,7 @@
 package tools
 
-// The repo map is a prototype, kept in memory for the session. In the
+// The repo map is a prototype, kept in memory for the session and stored in
+// the project between sessions (see search_map_store.go). In the
 // background, Jev tags every file search may send with its role and with the
 // concepts it is about, drawn from the repo's own folder and identifier names.
 // At search time Jev maps the query onto the same concepts, and files tagged
@@ -46,8 +47,9 @@ var searchRoles = map[string]any{
 }
 
 type searchMapEntry struct {
-	Role     string
-	Concepts map[string]float64
+	Hash     string             `json:"hash"` // of what the tags were made from
+	Role     string             `json:"role"`
+	Concepts map[string]float64 `json:"concepts"`
 }
 
 // searchMapScore is how well a file's concepts match a query's.
@@ -63,6 +65,9 @@ type searchMap struct {
 	total   int
 	done    int
 	failed  int
+	reused  int   // of done, entries taken from the stored map
+	gaveUp  bool  // the build stopped itself after repeated failures
+	saveErr error // from storing the finished map
 	vocab   []string
 	entries map[string]searchMapEntry
 	usage   searchUsage
@@ -105,13 +110,14 @@ func (s *Search) StartMap() {
 	s.repoMap.mu.Lock()
 	defer s.repoMap.mu.Unlock()
 	if s.repoMap.state == "" {
-		s.startBuild()
+		s.startBuild(false)
 	}
 }
 
 // Index builds the repo map because the user asked (/index): in any
-// directory, and again after a build that failed. It returns a line to show
-// the user.
+// directory, and again after a build that failed. Asked for a map that is
+// already built, it builds it from scratch, with a fresh vocabulary. It
+// returns a line to show the user.
 func (s *Search) Index() string {
 	if !s.mapOn {
 		panic("Index without the repo map on")
@@ -122,22 +128,23 @@ func (s *Search) Index() string {
 	case "building":
 		return "index: the repo map is already building"
 	case "ready":
-		return "index: the repo map is already built"
+		s.startBuild(true)
+		return "index: rebuilding the repo map from scratch in the background · sends the start of every code and config file to TypeSafe"
 	}
-	s.startBuild()
-	return "index: building the repo map in the background · sends the start of every code and config file to TypeSafe"
+	s.startBuild(false)
+	return "index: building the repo map in the background · sends the start of every new or changed code and config file to TypeSafe"
 }
 
-// startBuild needs the map's lock held.
-func (s *Search) startBuild() {
-	s.repoMap.state, s.repoMap.err = "building", nil
-	s.repoMap.total, s.repoMap.done, s.repoMap.failed = 0, 0, 0
-	s.repoMap.vocab, s.repoMap.entries = nil, nil
+// startBuild needs the map's lock held. A fresh build ignores the stored map.
+func (s *Search) startBuild(fresh bool) {
+	s.repoMap.state, s.repoMap.err, s.repoMap.saveErr = "building", nil, nil
+	s.repoMap.total, s.repoMap.done, s.repoMap.failed, s.repoMap.reused = 0, 0, 0, 0
+	s.repoMap.vocab, s.repoMap.entries, s.repoMap.gaveUp = nil, nil, false
 	s.repoMap.began = time.Now()
-	go s.buildMap()
+	go s.buildMap(fresh)
 }
 
-func (s *Search) buildMap() {
+func (s *Search) buildMap(fresh bool) {
 	m := &s.repoMap
 	fail := func(err error) {
 		m.mu.Lock()
@@ -152,6 +159,10 @@ func (s *Search) buildMap() {
 		return
 	}
 	files, _, err := searchReadFiles(ctx, s.root, root, nil)
+	var stored *searchMapStore
+	if !fresh {
+		stored = s.loadMap(root)
+	}
 	root.Close()
 	if err != nil {
 		fail(err)
@@ -171,13 +182,29 @@ func (s *Search) buildMap() {
 	if len(files) > searchMapMaxFiles {
 		files = files[:searchMapMaxFiles]
 	}
+	// A stored map keeps its vocabulary, since tags made against different
+	// vocabularies can't be compared, and its tags for files that haven't
+	// changed. Only the rest are sent.
 	vocab := searchVocabulary(files, searchMapConcepts)
+	entries := map[string]searchMapEntry{}
+	todo := files
+	if stored != nil {
+		vocab, todo = stored.Vocab, nil
+		for _, f := range files {
+			if entry, ok := stored.Files[f.name]; ok && entry.Hash == searchMapHash(f) {
+				entries[f.name] = entry
+			} else {
+				todo = append(todo, f)
+			}
+		}
+	}
 	if len(vocab) < 2 {
 		fail(fmt.Errorf("too few concepts in the repo (%d)", len(vocab)))
 		return
 	}
 	m.mu.Lock()
-	m.vocab, m.total, m.entries = vocab, len(files), map[string]searchMapEntry{}
+	m.vocab, m.total, m.entries = vocab, len(files), entries
+	m.reused, m.done = len(entries), len(entries)
 	m.mu.Unlock()
 
 	concepts := map[string]any{}
@@ -206,7 +233,7 @@ func (s *Search) buildMap() {
 			for f := range jobs {
 				// The first chunk stands for the file: enough to say what it is.
 				answers, used, err := s.jevCall(ctx, client, map[string]any{"path": f.name, "content": f.chunks[0].Content}, questions)
-				var entry searchMapEntry
+				entry := searchMapEntry{Hash: searchMapHash(f)}
 				if err == nil {
 					entry.Role, _, err = answers["role"].choice(searchRoles)
 				}
@@ -227,8 +254,9 @@ func (s *Search) buildMap() {
 					m.usage.Output += used.Output
 					m.entries[f.name] = entry
 				}
-				// Stop early once it is plain the build will fail.
-				failing := m.failed > 20 && m.failed*2 > m.done
+				// Stop early once it is plain Jev isn't answering.
+				failing := m.failed > 20 && m.failed*2 > m.done-m.reused
+				m.gaveUp = m.gaveUp || failing
 				m.mu.Unlock()
 				if failing {
 					cancel()
@@ -236,21 +264,32 @@ func (s *Search) buildMap() {
 			}
 		}()
 	}
-	for _, f := range files {
-		select {
-		case jobs <- f:
-		case <-ctx.Done():
-		}
-		if ctx.Err() != nil {
-			break
+	save := time.NewTicker(searchMapSaveEvery)
+	defer save.Stop()
+send:
+	for _, f := range todo {
+		for {
+			select {
+			case jobs <- f:
+				continue send
+			case <-save.C:
+				s.saveMap() // the save at the end reports any error
+			case <-ctx.Done():
+				break send
+			}
 		}
 	}
 	close(jobs)
 	wg.Wait()
+	// Whatever was tagged is worth keeping, even from a build that failed:
+	// the next one starts from it. Saved before the state changes, so a map
+	// that says it is ready is on disk.
+	saveErr := s.saveMap()
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.saveErr = saveErr
 	m.took = time.Since(m.began)
-	// A build that mostly failed is no map. One that ran out of time keeps
+	// A build that mostly failed is no map. One that stopped early keeps
 	// what it tagged: mapStatus says it is partial.
 	if len(m.entries) == 0 || m.failed*2 > m.done {
 		m.state = "failed"
@@ -353,9 +392,16 @@ func (s *Search) mapStatus() string {
 	case "building":
 		return fmt.Sprintf("Repo map: building in the background (%d/%d files tagged); this search used keywords only.", m.done, m.total)
 	case "ready":
-		status := fmt.Sprintf("Repo map: ready (%d of %d files tagged, %d concepts, built in %.0fs; %d failed).", len(m.entries), m.total, len(m.vocab), m.took.Seconds(), m.failed)
-		if m.done < m.total {
+		status := fmt.Sprintf("Repo map: ready (%d of %d files tagged, %d of them from %s, %d concepts, built in %.0fs; %d failed).", len(m.entries), m.total, m.reused, searchMapPath, len(m.vocab), m.took.Seconds(), m.failed)
+		switch {
+		case m.done == m.total:
+		case m.gaveUp:
+			status += fmt.Sprintf(" The build stopped after repeated failures (the first: %v), so the map is partial.", m.err)
+		default:
 			status += " The build ran out of time, so the map is partial."
+		}
+		if m.saveErr != nil {
+			status += fmt.Sprintf(" It could not be stored: %v.", m.saveErr)
 		}
 		return status
 	case "failed":
