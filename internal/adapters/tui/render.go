@@ -45,6 +45,7 @@ const (
 	colorCode         attr = 250
 	colorShellCommand attr = 252
 	colorShellOutput  attr = 245
+	colorFolded       attr = 242 // collapsed tool output, a step below expanded
 )
 
 // gutter marks code and tool output with a hairline instead of a shaded block.
@@ -69,6 +70,9 @@ type screenLine struct {
 	prefixLen   int
 	breakBefore lineBreak
 	startsEntry bool
+	// owner is the entry the line was rendered from; fold is the output
+	// entry za toggles from this line, if any. Set by Store.render.
+	owner, fold *entry
 }
 
 type lineWrapper struct {

@@ -33,6 +33,9 @@ const (
 	viewFocusInput            
 	viewYanked                
 	viewQuit
+	viewToggleFold
+	viewExpandAll
+	viewCollapseAll
 )
 
 type search struct {
@@ -74,9 +77,24 @@ func (v *transcriptView) handleKey(lines []screenLine, height int, register *[]r
 		return viewNoop
 	}
 
+	if pendingKey == 'z' {
+		switch char {
+		case 'a':
+			return viewToggleFold
+		case 'R':
+			return viewExpandAll
+		case 'M':
+			return viewCollapseAll
+		}
+		return viewNoop
+	}
+
 	switch {
 	case key == keyCtrlW:
 		v.pendingWindowCmd = true
+		return viewNoop
+	case v.visual == visualOff && char == 'z':
+		v.pendingKey = 'z'
 		return viewNoop
 	case key == keyEsc:
 		if v.visual != visualOff {
@@ -460,9 +478,15 @@ func (v *transcriptView) selection() (start, end position) {
 
 func yankText(lines []screenLine, start, end position, linewise bool) []rune {
 	var text []rune
+	wrote := false
 	for i := start.line; i <= end.line; i++ {
 		line := lines[i]
-		if i > start.line {
+		// Decorations (dividers, fold markers) are all prefix: skip them
+		// whole, including the line break they would add.
+		if len(line.cells) > 0 && line.prefixLen == len(line.cells) {
+			continue
+		}
+		if wrote {
 			switch line.breakBefore {
 			case breakHard:
 				text = append(text, '\n')
@@ -470,6 +494,7 @@ func yankText(lines []screenLine, start, end position, linewise bool) []rune {
 				text = append(text, ' ')
 			}
 		}
+		wrote = true
 		from, to := line.prefixLen, len(line.cells)
 		if !linewise {
 			if i == start.line {

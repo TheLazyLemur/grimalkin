@@ -6,6 +6,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"grimalkin/internal/core"
 )
 
 type fakeAgent struct {
@@ -234,5 +236,116 @@ func TestLongSearchKeepsItsTailAndCursorVisible(t *testing.T) {
 	}
 	if string(m.transcript.search.typed) != query {
 		t.Errorf("search scrolling changed the query")
+	}
+}
+
+func pressKeys(m *model, keys string) {
+	for _, char := range keys {
+		m.Update(tea.KeyPressMsg{Code: char, Text: string(char)})
+	}
+}
+
+func foldModel(t *testing.T) *model {
+	t.Helper()
+	store := NewStore()
+	store.Show(core.ToolStarted{ID: "1", Name: "shell", Summary: "seq 10"})
+	store.Show(core.ToolFinished{ID: "1", Output: "1\n2\n3\n4\n5\n6\n7\n8\n9\n10"})
+	store.Show(core.ToolStarted{ID: "2", Name: "shell", Summary: "seq 6"})
+	store.Show(core.ToolFinished{ID: "2", Output: "1\n2\n3\n4\n5\n6"})
+	m := newModel(&fakeAgent{}, store, nopClipboard{}, "fake")
+	m.Update(tea.WindowSizeMsg{Width: 60, Height: 40})
+	m.focusTranscript()
+	return m
+}
+
+func TestZaOnACommandTogglesItsOutputAndKeepsTheCursorOnIt(t *testing.T) {
+	// given
+	// ... two collapsed outputs, the cursor on the first command
+	m := foldModel(t)
+	m.transcript.jumpTo(m.lines, m.transcriptHeight, position{0, 0})
+
+	// when
+	// ... za is pressed, then za again
+	pressKeys(m, "za")
+	expanded := renderedTexts(m.store, m.contentWidth())
+	cursorAfterExpand := m.transcript.cursor
+	pressKeys(m, "za")
+
+	// then
+	// ... only the first block expands, the cursor stays on its command, and it collapses back
+	if len(expanded) != 12+7 || expanded[10] != "│ 10" || expanded[13] != "  ··· 2 lines above" {
+		t.Errorf("expanded lines %q", expanded)
+	}
+	if cursorAfterExpand != (position{0, 0}) || m.transcript.cursor != (position{0, 0}) {
+		t.Errorf("cursor after expand %+v, after collapse %+v", cursorAfterExpand, m.transcript.cursor)
+	}
+	if len(m.lines) != 7+7 {
+		t.Errorf("collapsed lines %q", renderedTexts(m.store, m.contentWidth()))
+	}
+	if m.focus != focusTranscript {
+		t.Errorf("za's a left VIEW")
+	}
+}
+
+func TestZaInsideOutputKeepsTheCursorOnTheSameBlock(t *testing.T) {
+	// given
+	// ... the cursor on the second block's last visible output line
+	m := foldModel(t)
+	m.transcript.jumpTo(m.lines, m.transcriptHeight, position{12, 0})
+	if lineText(m.lines[12]) != "  6" {
+		t.Fatalf("setup lines %q", renderedTexts(m.store, m.contentWidth()))
+	}
+
+	// when
+	// ... za is pressed
+	pressKeys(m, "za")
+
+	// then
+	// ... the second block expands and the cursor is still inside it
+	line := m.lines[m.transcript.cursor.line]
+	if line.owner == nil || line.owner.kind != entryOutput || !line.owner.expanded || !strings.HasPrefix(lineText(line), "│") {
+		t.Errorf("cursor on %q", lineText(line))
+	}
+	if m.lines[0].fold.expanded {
+		t.Errorf("first block expanded too")
+	}
+}
+
+func TestZRAndZMExpandAndCollapseEverything(t *testing.T) {
+	// given
+	// ... two collapsed outputs
+	m := foldModel(t)
+
+	// when
+	// ... zR, then zM
+	pressKeys(m, "zR")
+	expanded := renderedTexts(m.store, m.contentWidth())
+	pressKeys(m, "zM")
+	collapsed := renderedTexts(m.store, m.contentWidth())
+
+	// then
+	// ... all output shows behind gutters, then all is folded again
+	if len(expanded) != 12+8 || strings.Contains(strings.Join(expanded, "\n"), "···") {
+		t.Errorf("expanded %q", expanded)
+	}
+	if want := "  ··· 2 lines above"; collapsed[8] != want {
+		t.Errorf("collapsed %q", collapsed)
+	}
+}
+
+func TestZFollowedByAnotherKeyDoesNothing(t *testing.T) {
+	// given
+	// ... the transcript focused
+	m := foldModel(t)
+	before := m.transcript.cursor
+
+	// when
+	// ... z then j
+	pressKeys(m, "zj")
+
+	// then
+	// ... j was swallowed by the pending z, nothing folded or moved
+	if m.transcript.cursor != before || m.lines[0].fold.expanded {
+		t.Errorf("cursor %+v", m.transcript.cursor)
 	}
 }

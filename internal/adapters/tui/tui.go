@@ -138,8 +138,45 @@ func (m *model) handleTranscriptKey(char rune, key keyCode) tea.Cmd {
 		m.statusNote = fmt.Sprintf("yanked %d chars", len(m.register))
 	case viewQuit:
 		return tea.Quit
+	case viewToggleFold:
+		if len(m.lines) > 0 {
+			if fold := m.lines[m.transcript.cursor.line].fold; fold != nil {
+				m.refold(func() { m.store.toggleFold(fold) })
+			}
+		}
+	case viewExpandAll:
+		m.refold(func() { m.store.setAllFolds(true) })
+	case viewCollapseAll:
+		m.refold(func() { m.store.setAllFolds(false) })
 	}
 	return nil
+}
+
+// refold changes folds, then puts the cursor back on the entry it was on, so
+// the block being folded stays under it.
+func (m *model) refold(change func()) {
+	var owner *entry
+	offset := 0
+	if len(m.lines) > 0 {
+		cursor := m.transcript.cursor.line
+		owner = m.lines[cursor].owner
+		for first := cursor; first > 0 && m.lines[first-1].owner == owner; first-- {
+			offset++
+		}
+	}
+	change()
+	m.lines = m.store.render(m.contentWidth())
+	for i, line := range m.lines {
+		if line.owner == owner && owner != nil {
+			end := i
+			for end+1 < len(m.lines) && m.lines[end+1].owner == owner {
+				end++
+			}
+			m.transcript.jumpTo(m.lines, m.transcriptHeight, position{min(i+offset, end), 0})
+			return
+		}
+	}
+	m.transcript.clampAndScroll(m.lines, m.transcriptHeight)
 }
 
 func (m *model) handleInputKey(char rune, key keyCode) tea.Cmd {

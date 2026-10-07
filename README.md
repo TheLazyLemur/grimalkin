@@ -216,6 +216,8 @@ Bracketed paste goes in as-is, newlines included.
 | `/` `?`, then `n` `N`                | Search (smartcase, highlighted); `Esc` clears |
 | `v` `V`, `o`                         | Visual select; swap ends                   |
 | `y`, `yy`, `y$`                      | Yank                                       |
+| `za`                                 | Expand / collapse output under the cursor  |
+| `zR` `zM`                            | Expand / collapse all tool output          |
 | `j` past last line, `Ctrl-w j`       | → NORMAL                                   |
 | `i a o`                              | → INSERT                                   |
 | `q`                                  | Quit                                       |
@@ -230,7 +232,9 @@ WezTerm, foot, recent iTerm2); grimalkin enables it on start and disables it on
 exit. Elsewhere, use `Alt+Enter` or `Ctrl-J`. Output uses 256 colours.
 
 Replies render as markdown (headings, lists, quotes, rules, fenced code, inline
-bold/italic/code/links) in a muted dark palette with a moss accent. Code and
-shell output sit behind a thin gutter instead of a shaded block, and margins
-shrink on narrow terminals. Commands get a closed stdin; `Ctrl-C` kills a running
-command and its whole process group.
+bold/italic/code/links) in a muted dark palette with a moss accent. Code sits
+behind a thin gutter instead of a shaded block, and margins shrink on narrow
+terminals. Tool output starts collapsed: dimmed, showing its last 4 lines under
+a count of the rest. Skill content shows only its line count. Expanded output
+sits behind the gutter. Errors are never collapsed. Commands get a closed
+stdin; `Ctrl-C` kills a running command and its whole process group.
