@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type Agent interface {
@@ -184,13 +185,37 @@ func (m *model) send() tea.Cmd {
 	}
 }
 
+// margin is the empty space either side of the content. It shrinks to
+// nothing on narrow terminals so text keeps the room.
+func (m *model) margin() int {
+	switch {
+	case m.width >= 60:
+		return 2
+	case m.width >= 30:
+		return 1
+	}
+	return 0
+}
+
+// topPadding is the blank row above the transcript, dropped on short terminals.
+func (m *model) topPadding() int {
+	if m.height >= 16 {
+		return 1
+	}
+	return 0
+}
+
+func (m *model) contentWidth() int {
+	return max(m.width-2*m.margin(), 10)
+}
+
 func (m *model) layout() {
-	m.inputRows, m.inputCursor = layoutInput(&m.editor, max(m.width, 10), max(1, m.height/3))
+	m.inputRows, m.inputCursor = layoutInput(&m.editor, m.contentWidth(), max(1, m.height/3))
 	if m.transcript.search.typing {
 		m.inputRows = m.inputRows[:1]
 	}
-	m.transcriptHeight = max(1, m.height-1-len(m.inputRows))
-	m.lines = m.store.render(max(m.width, 10))
+	m.transcriptHeight = max(1, m.height-1-len(m.inputRows)-m.topPadding())
+	m.lines = m.store.render(m.contentWidth())
 	if m.focus == focusInput {
 		m.transcript.scrollTop = max(0, len(m.lines)-m.transcriptHeight)
 	} else {
@@ -207,7 +232,7 @@ func layoutInput(e *editor, width, maxRows int) (rows []screenLine, cursor posit
 	newRow := func(first bool) screenLine {
 		if first {
 			return screenLine{
-				cells:     []cell{{'>', colorUser | attrBold, 0}, {' ', 0, 0}},
+				cells:     []cell{{'›', colorUser | attrBold, 0}, {' ', 0, 0}},
 				prefixLen: promptWidth,
 			}
 		}
@@ -262,7 +287,9 @@ func (m *model) View() tea.View {
 	if m.width < 10 || m.height < 4 {
 		return view
 	}
-	rows := m.renderTranscript()
+	left, top := m.margin(), m.topPadding()
+	rows := make([]string, top, m.height)
+	rows = append(rows, m.renderTranscript()...)
 	rows = append(rows, m.renderStatusBar())
 	inputTop := len(rows)
 
@@ -270,7 +297,7 @@ func (m *model) View() tea.View {
 		prompt := m.searchPrompt()
 		rows = append(rows, m.renderLine(prompt))
 		view.Content = strings.Join(rows, "\n")
-		view.Cursor = tea.NewCursor(cellsWidth(prompt.cells), inputTop)
+		view.Cursor = tea.NewCursor(left+cellsWidth(prompt.cells), inputTop)
 		return view
 	}
 
@@ -278,11 +305,11 @@ func (m *model) View() tea.View {
 	view.Content = strings.Join(rows, "\n")
 	switch {
 	case m.focus == focusInput:
-		view.Cursor = tea.NewCursor(m.inputCursor.col, inputTop+m.inputCursor.line)
+		view.Cursor = tea.NewCursor(left+m.inputCursor.col, inputTop+m.inputCursor.line)
 	case len(m.lines) > 0:
 		cursor := m.transcript.cursor
 		x := cellsWidth(m.lines[cursor.line].cells[:cursor.col])
-		view.Cursor = tea.NewCursor(x, cursor.line-m.transcript.scrollTop)
+		view.Cursor = tea.NewCursor(left+x, top+cursor.line-m.transcript.scrollTop)
 	}
 	return view
 }
@@ -328,37 +355,64 @@ func (m *model) renderTranscript() []string {
 	return rows
 }
 
+// renderStatusBar is a single quiet line: the mode in its accent colour, a
+// hairline, then the model and what it's doing.
 func (m *model) renderStatusBar() string {
-	mode, modeBg := " VIEW ", colorModeView
+	mode, modeColor := "view", colorModeView
 	switch m.transcript.visual {
 	case visualChar:
-		mode = " VISUAL "
+		mode = "visual"
 	case visualLine:
-		mode = " V-LINE "
+		mode = "v-line"
 	}
 	if m.focus == focusInput {
 		switch m.editor.mode {
 		case modeInsert:
-			mode, modeBg = " INSERT ", colorModeInsert
+			mode, modeColor = "insert", colorModeInsert
 		case modeNormal:
-			mode, modeBg = " NORMAL ", colorModeNormal
+			mode, modeColor = "normal", colorModeNormal
 		}
 	}
-	state := "ready"
-	if m.busy {
-		state = "working… Ctrl-C to stop"
-	}
 
-	bar := styledCells(mode, colorModeText|attrBold, modeBg)
-	bar = append(
-		bar,
-		styledCells(fmt.Sprintf(" %s · %s ", m.modelName, state), colorStatus|attrBold, 0)...)
+	width := m.contentWidth()
+	state, stateColor := "ready", colorDim
+	if m.busy {
+		state, stateColor = "working · ctrl-c to stop", colorBusy
+	}
+	// Reserve the mode and activity before giving room to notes or the model.
+	// Compact labels keep the activity visible even at the minimum width.
+	budget := width - len(mode) - 2
+	if m.busy {
+		for _, compact := range []string{"working · ctrl-c", "working", "run"} {
+			if ansi.StringWidth(state) <= budget {
+				break
+			}
+			state = compact
+		}
+	} else if len(state) > budget {
+		state = "ok"
+	}
+	left := styledCells(mode, modeColor|attrBold, 0)
+	right := append(styledCells(" ", 0, 0), styledCells(state, stateColor, 0)...)
 	if m.statusNote != "" {
-		bar = append(bar, styledCells(fmt.Sprintf("· %s ", m.statusNote), colorInfo, 0)...)
+		room := width - cellsWidth(left) - cellsWidth(right) - 3
+		if room > 0 {
+			note := ansi.Truncate(m.statusNote, room, "…")
+			left = append(left, styledCells("  "+note, colorDim|attrItalic, 0)...)
+		}
 	}
-	for len(bar) < m.width {
-		bar = append(bar, cell{'─', colorRule, 0})
+	if cellsWidth(left)+cellsWidth(right) < width {
+		left = append(left, cell{' ', 0, 0})
 	}
+	modelLabel := styledCells(" "+m.modelName+" ", colorDim, 0)
+	if m.modelName != "" && cellsWidth(left)+cellsWidth(modelLabel)+cellsWidth(right) < width {
+		right = append(modelLabel, right...)
+	}
+	bar := left
+	for range max(0, width-cellsWidth(left)-cellsWidth(right)) {
+		bar = append(bar, cell{'─', colorFaint, 0})
+	}
+	bar = append(bar, right...)
 	return m.renderLine(screenLine{cells: bar})
 }
 
@@ -367,8 +421,15 @@ func (m *model) searchPrompt() screenLine {
 	if m.transcript.search.typedBackward {
 		prompt = '?'
 	}
-	cells := []cell{{prompt, colorModeView | attrBold, 0}}
-	return screenLine{cells: append(cells, styledCells(string(m.transcript.search.typed), 0, 0)...)}
+	cells := []cell{{prompt, colorUser | attrBold, 0}}
+	typed := styledCells(string(m.transcript.search.typed), 0, 0)
+	// Keep the prompt and the insertion cursor visible as the query grows.
+	remaining := cellsWidth(typed)
+	for len(typed) > 0 && remaining > m.contentWidth()-2 {
+		remaining -= cellsWidth(typed[:1])
+		typed = typed[1:]
+	}
+	return screenLine{cells: append(cells, typed...)}
 }
 
 func (m *model) renderInput() []string {
@@ -377,7 +438,7 @@ func (m *model) renderInput() []string {
 		if m.focus != focusInput {
 			row.cells = slices.Clone(row.cells)
 			for j := row.prefixLen; j < len(row.cells); j++ {
-				row.cells[j].fg = colorQuote
+				row.cells[j].fg = colorDim
 			}
 		}
 		rows = append(rows, m.renderLine(row))
@@ -393,8 +454,12 @@ func cellsWidth(cells []cell) int {
 	return width
 }
 
+// renderLine draws a line inside the margins. Margins are added here, never
+// stored in cells, so yanks and searches can't see them.
 func (m *model) renderLine(line screenLine) string {
 	var out strings.Builder
+	width := m.contentWidth()
+	out.WriteString(strings.Repeat(" ", m.margin()))
 	var run []rune
 	var runFg, runBg attr
 	flush := func() {
@@ -405,8 +470,8 @@ func (m *model) renderLine(line screenLine) string {
 	}
 	x := 0
 	for _, c := range line.cells {
-		width := max(1, runeWidth(c.char))
-		if x+width > m.width {
+		charWidth := max(1, runeWidth(c.char))
+		if x+charWidth > width {
 			break
 		}
 		bg := c.bg
@@ -422,11 +487,11 @@ func (m *model) renderLine(line screenLine) string {
 			char = ' '
 		}
 		run = append(run, char)
-		x += width
+		x += charWidth
 	}
 	flush()
-	if line.fill != 0 && x < m.width {
-		out.WriteString(m.style(0, line.fill).Render(strings.Repeat(" ", m.width-x)))
+	if line.fill != 0 && x < width {
+		out.WriteString(m.style(0, line.fill).Render(strings.Repeat(" ", width-x)))
 	}
 	return out.String()
 }

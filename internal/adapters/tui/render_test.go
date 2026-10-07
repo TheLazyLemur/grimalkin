@@ -20,11 +20,11 @@ func TestInlineMarkersStyleTextAndAreRemoved(t *testing.T) {
 	lines := renderMarkdown(text, 80)
 
 	// then
-	// ... the markers are gone, bold text is bold and code has the code background
+	// ... the markers are gone, bold text is bold and code has the code colour
 	if len(lines) != 1 || lineText(lines[0]) != "bold and code" {
 		t.Fatalf("lines %q", lineText(lines[0]))
 	}
-	if lines[0].cells[0].fg&attrBold == 0 || lines[0].cells[9].bg != colorInlineCodeBg {
+	if lines[0].cells[0].fg&attrBold == 0 || lines[0].cells[9].fg.color() != colorInlineCode.color() {
 		t.Errorf("cells %+v", lines[0].cells)
 	}
 }
@@ -45,7 +45,7 @@ func TestLoneAsterisksStayLiteral(t *testing.T) {
 	}
 }
 
-func TestFencedCodeFillsItsRowsWithTheCodeBackground(t *testing.T) {
+func TestFencedCodeSitsBehindAGutterThatYanksSkip(t *testing.T) {
 	// given
 	// ... a fenced code block
 	text := "```go\nx := 1\n```"
@@ -55,9 +55,12 @@ func TestFencedCodeFillsItsRowsWithTheCodeBackground(t *testing.T) {
 	lines := renderMarkdown(text, 80)
 
 	// then
-	// ... the fences are dropped and the code row is indented and filled
-	if len(lines) != 1 || lineText(lines[0]) != "  x := 1" || lines[0].fill != colorCodeBg {
-		t.Errorf("lines %+v", lines)
+	// ... the fences are dropped, the row has a gutter and no shading, and a yank gets only the code
+	if len(lines) != 1 || lineText(lines[0]) != "│ x := 1" || lines[0].fill != 0 {
+		t.Fatalf("lines %+v", lines)
+	}
+	if got := string(yankText(lines, position{0, 0}, position{0, endOfLine}, true)); got != "x := 1" {
+		t.Errorf("yanked %q", got)
 	}
 }
 
@@ -72,7 +75,7 @@ func TestBulletsWrapAtWordsWithAHangingIndent(t *testing.T) {
 
 	// then
 	// ... it breaks between words and continues under the text, not the bullet
-	if len(lines) != 2 || lineText(lines[0]) != "• one two" || lineText(lines[1]) != "  three" {
+	if len(lines) != 2 || lineText(lines[0]) != "· one two" || lineText(lines[1]) != "  three" {
 		t.Errorf("lines %q", []string{lineText(lines[0]), lineText(lines[len(lines)-1])})
 	}
 }

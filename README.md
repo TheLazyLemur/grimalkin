@@ -230,6 +230,7 @@ WezTerm, foot, recent iTerm2); grimalkin enables it on start and disables it on
 exit. Elsewhere, use `Alt+Enter` or `Ctrl-J`. Output uses 256 colours.
 
 Replies render as markdown (headings, lists, quotes, rules, fenced code, inline
-bold/italic/code/links). Shell commands and their output sit in a shaded block.
-Commands get a closed stdin; `Ctrl-C` kills a running command and its whole
-process group.
+bold/italic/code/links) in a muted dark palette with a moss accent. Code and
+shell output sit behind a thin gutter instead of a shaded block, and margins
+shrink on narrow terminals. Commands get a closed stdin; `Ctrl-C` kills a running
+command and its whole process group.

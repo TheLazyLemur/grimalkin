@@ -82,17 +82,46 @@ func TestADividerSeparatesEachTurnFromTheLast(t *testing.T) {
 	lines := store.render(10)
 
 	// then
-	// ... a full-width rule sits before the second turn only, and is left out of yanks
+	// ... a short centred hairline sits before the second turn only, and is left out of yanks
 	var texts []string
 	for _, line := range lines {
 		texts = append(texts, lineText(line))
 	}
-	divider := strings.Repeat("━", 10)
+	divider := "   ───"
 	want := []string{"model x", "", "› one", "", "first", "", divider, "", "› two", "", "second", ""}
 	if !slices.Equal(texts, want) {
 		t.Fatalf("lines %q\nwant %q", texts, want)
 	}
-	if lines[6].prefixLen != 10 || lines[6].startsEntry {
+	if lines[6].prefixLen != len(lines[6].cells) || lines[6].startsEntry {
 		t.Errorf("divider %+v", lines[6])
+	}
+}
+
+func TestToolOutputHangsUnderItsCommandBehindAGutter(t *testing.T) {
+	// given
+	// ... a shell call and its output
+	store := NewStore()
+	store.Show(core.ToolStarted{ID: "1", Name: "shell", Summary: "ls"})
+	store.Show(core.ToolFinished{ID: "1", Output: "a\nb"})
+
+	// when
+	// ... the transcript is rendered
+	lines := store.render(20)
+
+	// then
+	// ... the output follows the command directly, unshaded, and a yank of it drops the gutter
+	var texts []string
+	for _, line := range lines {
+		texts = append(texts, lineText(line))
+		if line.fill != 0 {
+			t.Errorf("line %q is shaded", lineText(line))
+		}
+	}
+	want := []string{"$ ls", "│ a", "│ b", ""}
+	if !slices.Equal(texts, want) {
+		t.Fatalf("lines %q\nwant %q", texts, want)
+	}
+	if got := string(yankText(lines, position{1, 0}, position{2, endOfLine}, true)); got != "a\nb" {
+		t.Errorf("yanked %q", got)
 	}
 }

@@ -35,7 +35,7 @@ type entry struct {
 type Store struct {
 	mu      sync.Mutex
 	entries []*entry
-	reply   *entry       
+	reply   *entry
 	changed chan struct{}
 }
 
@@ -133,29 +133,27 @@ func renderEntry(kind entryKind, text string, width int) []screenLine {
 	case entryInfo:
 		lines = wrapPlainText(text, width, colorInfo, 0, nil, nil)
 	case entryUser:
-		style := colorUser | attrBold
-		lines = wrapPlainText(text, width, style, 0, styledCells("› ", style, 0), styledCells("  ", 0, 0))
+		marker := styledCells("› ", colorUser|attrBold, 0)
+		lines = wrapPlainText(text, width, 0, 0, marker, styledCells("  ", 0, 0))
 	case entryReply:
 		lines = renderMarkdown(text, width)
 	case entryCommand:
-		style := colorShellCommand | attrBold
-		lines = append(lines, screenLine{fill: colorShellBg})
-		lines = append(lines, wrapPlainText(text, width, style, colorShellBg, styledCells(" $ ", style, colorShellBg), styledCells("   ", 0, colorShellBg))...)
-		return lines
+		// No trailing blank: the command sits directly above its output.
+		prompt := styledCells("$ ", colorUser, 0)
+		return wrapPlainText(text, width, colorShellCommand, 0, prompt, styledCells("  ", 0, 0))
 	case entryOutput:
-		padding := styledCells("   ", 0, colorShellBg)
-		lines = wrapPlainText(text, width, colorShellOutput, colorShellBg, padding, padding)
-		lines = append(lines, screenLine{fill: colorShellBg})
+		lines = wrapPlainText(text, width, colorShellOutput, 0, gutter(), gutter())
 	case entryError:
 		lines = wrapPlainText(text, width, colorError, 0, nil, nil)
 	}
 	return append(lines, screenLine{})
 }
 
-// turnDivider is a heavy rule, apart from the light one a reply's markdown
-// can draw. Its cells count as prefix, so yanks and searches skip it.
+// turnDivider is a short, centred hairline: a pause between turns rather
+// than a wall. Its cells count as prefix, so yanks skip it.
 func turnDivider(width int) screenLine {
-	cells := styledCells(strings.Repeat("━", width), colorRule, 0)
+	length := min(width, max(3, width/6))
+	cells := styledCells(strings.Repeat(" ", (width-length)/2)+strings.Repeat("─", length), colorFaint, 0)
 	return screenLine{cells: cells, prefixLen: len(cells)}
 }
 

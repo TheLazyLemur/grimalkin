@@ -19,33 +19,36 @@ const (
 
 func (a attr) color() uint8 { return uint8(a & 0xff) }
 
-// Palette: xterm 256-colour indices.
+// Palette: xterm 256-colour indices. Dark ink and moss: warm greys on the
+// terminal's own background, one muted green accent, colour kept for meaning.
 const (
-	colorInfo         attr = 141
-	colorUser         attr = 81
-	colorError        attr = 203
-	colorStatus       attr = 75
-	colorModeText     attr = 234
-	colorModeInsert   attr = 114
-	colorModeNormal   attr = 75
-	colorModeView     attr = 177
+	colorInfo         attr = 243 // stone grey
+	colorUser         attr = 108 // moss
+	colorError        attr = 167 // muted vermilion
+	colorBusy         attr = 180 // sand
+	colorDim          attr = 243
+	colorFaint        attr = 238 // hairlines and gutters
+	colorModeInsert   attr = 108 // moss
+	colorModeNormal   attr = 109 // slate
+	colorModeView     attr = 139 // wisteria
 	colorMatchText    attr = 234
-	colorMatchBg      attr = 179
-	colorSelectionBg  attr = 239
-	colorHeading1     attr = 213
-	colorHeading2     attr = 117
-	colorBullet       attr = 75
-	colorQuote        attr = 245
-	colorRule         attr = 240
-	colorLink         attr = 117
-	colorInlineCode   attr = 215
-	colorInlineCodeBg attr = 237
-	colorCode         attr = 252
-	colorCodeBg       attr = 236
-	colorShellBg      attr = 235
-	colorShellCommand attr = 221
-	colorShellOutput  attr = 250
+	colorMatchBg      attr = 144
+	colorSelectionBg  attr = 237
+	colorHeading1     attr = 254
+	colorHeading2     attr = 251
+	colorHeading3     attr = 247
+	colorBullet       attr = 108
+	colorQuote        attr = 246
+	colorRule         attr = 238
+	colorLink         attr = 109
+	colorInlineCode   attr = 180
+	colorCode         attr = 250
+	colorShellCommand attr = 252
+	colorShellOutput  attr = 245
 )
+
+// gutter marks code and tool output with a hairline instead of a shaded block.
+func gutter() []cell { return styledCells("│ ", colorFaint, 0) }
 
 type cell struct {
 	char   rune
@@ -214,10 +217,9 @@ func renderMarkdown(text string, width int) []screenLine {
 			continue
 		}
 		if inCodeBlock {
-			padding := styledCells("  ", colorCode, colorCodeBg)
 			lines = append(
 				lines,
-				wrapPlainText(line, width, colorCode, colorCodeBg, padding, padding)...)
+				wrapPlainText(line, width, colorCode, 0, gutter(), gutter())...)
 			continue
 		}
 		if trimmed == "" {
@@ -232,12 +234,12 @@ func renderMarkdown(text string, width int) []screenLine {
 			continue
 		}
 		if level := headingLevel(trimmed); level > 0 {
-			style := attrBold
+			style := attrBold | colorHeading3
 			switch level {
 			case 1:
-				style |= colorHeading1 | attrUnderline
+				style = attrBold | colorHeading1
 			case 2:
-				style |= colorHeading2
+				style = attrBold | colorHeading2
 			}
 			lines = append(
 				lines,
@@ -246,14 +248,14 @@ func renderMarkdown(text string, width int) []screenLine {
 		}
 		if strings.HasPrefix(trimmed, ">") {
 			body := strings.TrimLeft(trimmed[1:], " \t\v\f\r")
-			bar := styledCells("│ ", colorQuote, 0)
+			bar := styledCells("│ ", colorFaint, 0)
 			lines = append(
 				lines,
 				renderInlineMarkdown(body, width, colorQuote|attrItalic, bar, bar)...)
 			continue
 		}
 		if isBullet(trimmed) {
-			marker := styledCells(indent+"• ", colorBullet, 0)
+			marker := styledCells(indent+"· ", colorBullet, 0)
 			hangingIndent := styledCells(indent+"  ", 0, 0)
 			lines = append(
 				lines,
@@ -304,7 +306,7 @@ func renderInlineMarkdown(s string, width int, base attr, prefix, indent []cell)
 		case rest[0] == '`':
 			if end := strings.IndexByte(rest[1:], '`'); end >= 0 {
 				for _, char := range rest[1 : 1+end] {
-					w.write(char, emphasis(colorInlineCode), colorInlineCodeBg)
+					w.write(char, emphasis(colorInlineCode), 0)
 				}
 				i += end + 2
 				continue
@@ -313,7 +315,7 @@ func renderInlineMarkdown(s string, width int, base attr, prefix, indent []cell)
 			if textEnd := strings.Index(rest, "]("); textEnd > 0 {
 				if urlEnd := strings.IndexByte(rest[textEnd:], ')'); urlEnd >= 0 {
 					for _, char := range rest[1:textEnd] {
-						w.write(char, colorLink|attrUnderline, 0)
+						w.write(char, colorLink, 0)
 					}
 					i += textEnd + urlEnd + 1
 					continue
