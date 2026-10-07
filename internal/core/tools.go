@@ -38,7 +38,7 @@ func (a *Agent) runTool(ctx context.Context, call ToolCall, pending []ToolResult
 	case tool != nil:
 		summary = tool.Summary(call.Input)
 		run = func() (string, error) { return tool.Run(ctx, call.Input) }
-	case call.Name == skillToolName && len(a.modelSkillNames()) > 0:
+	case call.Name == SkillToolName && len(a.modelSkillNames()) > 0:
 		summary = skillSummary(call.Input)
 		run = func() (string, error) { return a.runSkillTool(ctx, call.Input, pending) }
 		limit = 0 // a skill cut short loses instructions; its parts are capped instead

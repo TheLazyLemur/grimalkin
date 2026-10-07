@@ -152,31 +152,74 @@ func (m *model) handleTranscriptKey(char rune, key keyCode) tea.Cmd {
 	return nil
 }
 
-// refold changes folds, then puts the cursor back on the entry it was on, so
-// the block being folded stays under it.
+// refold changes folds, then puts the cursor back where it was relative to
+// an anchor entry: the one under the cursor, or for a line that belongs to
+// none (a divider), the next entry. If that spot no longer exists because the
+// block collapsed, the cursor goes to the top of the block, with the block in
+// view.
 func (m *model) refold(change func()) {
-	var owner *entry
-	offset := 0
-	if len(m.lines) > 0 {
-		cursor := m.transcript.cursor.line
-		owner = m.lines[cursor].owner
-		for first := cursor; first > 0 && m.lines[first-1].owner == owner; first-- {
-			offset++
+	if len(m.lines) == 0 {
+		change()
+		return
+	}
+	cursor := m.transcript.cursor.line
+	anchorLine := cursor
+	for anchorLine < len(m.lines) && m.lines[anchorLine].owner == nil {
+		anchorLine++
+	}
+	if anchorLine == len(m.lines) {
+		for anchorLine = cursor; anchorLine > 0 && m.lines[anchorLine].owner == nil; anchorLine-- {
 		}
 	}
+	anchor := m.lines[anchorLine].owner
+	oldStart, _ := ownedRange(m.lines, anchor)
+	delta := cursor - oldStart
+	inside := m.lines[cursor].owner == anchor && anchor != nil
+
 	change()
 	m.lines = m.store.render(m.contentWidth())
-	for i, line := range m.lines {
-		if line.owner == owner && owner != nil {
-			end := i
-			for end+1 < len(m.lines) && m.lines[end+1].owner == owner {
-				end++
+	if anchor == nil {
+		m.transcript.clampAndScroll(m.lines, m.transcriptHeight)
+		return
+	}
+	start, end := ownedRange(m.lines, anchor)
+	if start < 0 {
+		m.transcript.clampAndScroll(m.lines, m.transcriptHeight)
+		return
+	}
+	for end > start && len(m.lines[end].cells) == 0 {
+		end--
+	}
+	target := start + delta
+	if inside && target > end {
+		// Collapsed under the cursor: go to the block's command, if it has one.
+		target = start
+		if anchor.kind == entryOutput && start > 0 && m.lines[start-1].fold == anchor {
+			target = start - 1
+			for target > 0 && m.lines[target-1].owner == m.lines[target].owner {
+				target--
 			}
-			m.transcript.jumpTo(m.lines, m.transcriptHeight, position{min(i+offset, end), 0})
-			return
 		}
 	}
-	m.transcript.clampAndScroll(m.lines, m.transcriptHeight)
+	target = clamp(target, 0, len(m.lines)-1)
+	m.transcript.jumpTo(m.lines, m.transcriptHeight, position{target, 0})
+}
+
+// ownedRange is the first and last line rendered from e, or -1, -1.
+func ownedRange(lines []screenLine, e *entry) (start, end int) {
+	start, end = -1, -1
+	if e == nil {
+		return
+	}
+	for i, line := range lines {
+		if line.owner == e {
+			if start < 0 {
+				start = i
+			}
+			end = i
+		}
+	}
+	return
 }
 
 func (m *model) handleInputKey(char rune, key keyCode) tea.Cmd {
@@ -434,8 +477,17 @@ func (m *model) renderStatusBar() string {
 	if m.statusNote != "" {
 		room := width - cellsWidth(left) - cellsWidth(right) - 3
 		if room > 0 {
-			note := ansi.Truncate(m.statusNote, room, "…")
-			left = append(left, styledCells("  "+note, colorDim|attrItalic, 0)...)
+			// Cut by cells, the unit the bar is laid out in, so the note can
+			// never push the state off the line.
+			note := styledCells(m.statusNote, colorDim|attrItalic, 0)
+			if cellsWidth(note) > room {
+				for len(note) > 0 && cellsWidth(note)+1 > room {
+					note = note[:len(note)-1]
+				}
+				note = append(note, cell{'…', colorDim | attrItalic, 0})
+			}
+			left = append(left, styledCells("  ", 0, 0)...)
+			left = append(left, note...)
 		}
 	}
 	if cellsWidth(left)+cellsWidth(right) < width {

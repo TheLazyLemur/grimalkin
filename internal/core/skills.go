@@ -10,7 +10,8 @@ import (
 	"unicode"
 )
 
-const skillToolName = "skill"
+// SkillToolName is the tool the model loads skills with.
+const SkillToolName = "skill"
 
 const skillToolDescription = "Load a skill's full instructions. Call it when a task matches one of the skills in <available_skills>, before starting the task, then follow what it returns. Don't call it for a skill the user already loaded with /name."
 
@@ -55,7 +56,7 @@ func skillToolSpec(names []string) ToolSpec {
 		panic(err)
 	}
 	return ToolSpec{
-		Name:        skillToolName,
+		Name:        SkillToolName,
 		Description: skillToolDescription,
 		InputSchema: `{"type":"object","properties":{` +
 			`"name":{"type":"string","enum":` + string(enum) + `,"description":"The skill to load."},` +
@@ -80,9 +81,9 @@ func parseSkillInput(input json.RawMessage) (skillInput, error) {
 func skillSummary(input json.RawMessage) string {
 	in, err := parseSkillInput(input)
 	if err != nil {
-		return skillToolName + " " + string(input)
+		return SkillToolName + " " + string(input)
 	}
-	return strings.TrimSpace(skillToolName + " " + *in.Name + " " + in.Arguments)
+	return strings.TrimSpace(SkillToolName + " " + *in.Name + " " + in.Arguments)
 }
 
 // runSkillTool loads a skill for the model. pending holds this response's

@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -347,5 +349,109 @@ func TestZFollowedByAnotherKeyDoesNothing(t *testing.T) {
 	// ... j was swallowed by the pending z, nothing folded or moved
 	if m.transcript.cursor != before || m.lines[0].fold.expanded {
 		t.Errorf("cursor %+v", m.transcript.cursor)
+	}
+}
+
+func TestCollapsingFromDeepInsideOutputLandsOnItsCommandInView(t *testing.T) {
+	// given
+	// ... a 200-line output expanded, a long reply after it, the cursor 150 lines into the output
+	store := NewStore()
+	var out []string
+	for i := range 200 {
+		out = append(out, fmt.Sprint(i))
+	}
+	store.Show(core.ToolStarted{ID: "1", Name: "shell", Summary: "seq 200"})
+	store.Show(core.ToolFinished{ID: "1", Output: strings.Join(out, "\n")})
+	store.Show(core.ReplyStarted{})
+	store.Show(core.ReplyText{Text: strings.Repeat("x\n", 60)})
+	m := newModel(&fakeAgent{}, store, nopClipboard{}, "fake")
+	m.Update(tea.WindowSizeMsg{Width: 60, Height: 40})
+	m.focusTranscript()
+	pressKeys(m, "zR")
+	m.transcript.jumpTo(m.lines, m.transcriptHeight, position{151, 0})
+
+	// when
+	// ... za folds it
+	pressKeys(m, "za")
+
+	// then
+	// ... the cursor is on the command and the folded block is on screen
+	if m.transcript.cursor.line != 0 || lineText(m.lines[0]) != "$ seq 200" {
+		t.Errorf("cursor %+v", m.transcript.cursor)
+	}
+	if m.transcript.scrollTop != 0 {
+		t.Errorf("scrollTop %d", m.transcript.scrollTop)
+	}
+}
+
+func TestFoldingAllKeepsACursorOnADividerOnThatDivider(t *testing.T) {
+	// given
+	// ... a long collapsed output in turn one, the cursor on the divider before turn two
+	store := NewStore()
+	var out []string
+	for i := range 100 {
+		out = append(out, fmt.Sprint(i))
+	}
+	store.addUser("one")
+	store.Show(core.ToolStarted{ID: "1", Name: "shell", Summary: "seq 100"})
+	store.Show(core.ToolFinished{ID: "1", Output: strings.Join(out, "\n")})
+	store.addUser("two")
+	m := newModel(&fakeAgent{}, store, nopClipboard{}, "fake")
+	m.Update(tea.WindowSizeMsg{Width: 60, Height: 40})
+	m.focusTranscript()
+	divider := slices.IndexFunc(m.lines, func(l screenLine) bool {
+		return l.decoration && strings.Contains(lineText(l), "──")
+	})
+	m.transcript.jumpTo(m.lines, m.transcriptHeight, position{divider, 0})
+
+	// when
+	// ... zR, then zM
+	pressKeys(m, "zR")
+	afterExpand := m.lines[m.transcript.cursor.line]
+	pressKeys(m, "zM")
+	afterCollapse := m.lines[m.transcript.cursor.line]
+
+	// then
+	// ... the cursor is on the divider both times
+	if !strings.Contains(lineText(afterExpand), "──") || !strings.Contains(lineText(afterCollapse), "──") {
+		t.Errorf("cursor on %q then %q", lineText(afterExpand), lineText(afterCollapse))
+	}
+}
+
+func TestZAfterAnotherPendingKeyCancelsLikeBefore(t *testing.T) {
+	for _, keys := range []string{"yza", "gza"} {
+		// given
+		// ... collapsed output with the cursor on its command
+		m := foldModel(t)
+		m.transcript.jumpTo(m.lines, m.transcriptHeight, position{0, 0})
+
+		// when
+		// ... y or g, then z, then a
+		pressKeys(m, keys)
+
+		// then
+		// ... nothing folds and a enters insert, as it did before folds
+		if m.lines[0].fold.expanded || m.focus != focusInput {
+			t.Errorf("%s: expanded %v, focus %v", keys, m.lines[0].fold.expanded, m.focus)
+		}
+	}
+}
+
+func TestZeroWidthRunesInANoteCannotPushTheStateOff(t *testing.T) {
+	// given
+	// ... a long note of Thai syllables with tone marks while a turn runs
+	m := newModel(&fakeAgent{}, NewStore(), nopClipboard{}, "fake")
+	m.width, m.height = 80, 20
+	m.statusNote = "pattern not found: " + strings.Repeat("ก\u0e48", 40)
+	m.busy = true
+
+	// when
+	// ... the status bar is drawn
+	status := ansi.Strip(m.renderStatusBar())
+
+	// then
+	// ... the note is cut and the full state still shows
+	if !strings.HasSuffix(status, "working · ctrl-c to stop") || !strings.Contains(status, "…") {
+		t.Errorf("status %q", status)
 	}
 }

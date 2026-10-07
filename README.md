@@ -234,7 +234,8 @@ exit. Elsewhere, use `Alt+Enter` or `Ctrl-J`. Output uses 256 colours.
 Replies render as markdown (headings, lists, quotes, rules, fenced code, inline
 bold/italic/code/links) in a muted dark palette with a moss accent. Code sits
 behind a thin gutter instead of a shaded block, and margins shrink on narrow
-terminals. Tool output starts collapsed: dimmed, showing its last 4 lines under
-a count of the rest. Skill content shows only its line count. Expanded output
-sits behind the gutter. Errors are never collapsed. Commands get a closed
+terminals. Tool output starts collapsed: dimmed, showing its last 4 screen rows
+under a count of the rest. Skills, whether you or the model loaded them, show
+only their line count. Expanded output sits behind the gutter. Errors are never
+collapsed. Commands get a closed
 stdin; `Ctrl-C` kills a running command and its whole process group.

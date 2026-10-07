@@ -70,6 +70,9 @@ type screenLine struct {
 	prefixLen   int
 	breakBefore lineBreak
 	startsEntry bool
+	// decoration marks a line that isn't content (a divider, a fold
+	// marker): yanks leave it out entirely.
+	decoration bool
 	// owner is the entry the line was rendered from; fold is the output
 	// entry za toggles from this line, if any. Set by Store.render.
 	owner, fold *entry

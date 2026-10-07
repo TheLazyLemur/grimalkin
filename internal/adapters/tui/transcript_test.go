@@ -205,3 +205,137 @@ func TestErrorsAreNeverFolded(t *testing.T) {
 		t.Errorf("lines %q\nwant %q", texts, want)
 	}
 }
+
+func TestYankKeepsBlankLinesInsideExpandedOutput(t *testing.T) {
+	// given
+	// ... expanded output with a blank line in it
+	store := NewStore()
+	store.Show(core.ToolStarted{ID: "1", Name: "shell", Summary: "printf"})
+	store.Show(core.ToolFinished{ID: "1", Output: "a\n\nb"})
+	store.setAllFolds(true)
+	lines := store.render(30)
+
+	// when
+	// ... the output is yanked
+	got := string(yankText(lines, position{1, 0}, position{3, endOfLine}, true))
+
+	// then
+	// ... the blank line survives
+	if got != "a\n\nb" {
+		t.Errorf("yanked %q", got)
+	}
+}
+
+func TestCommandsWithoutOutputStillStandApart(t *testing.T) {
+	// given
+	// ... two commands with no output, one with whitespace-only output, then a reply
+	store := NewStore()
+	store.Show(core.ToolStarted{ID: "1", Name: "shell", Summary: "true"})
+	store.Show(core.ToolFinished{ID: "1", Output: ""})
+	store.Show(core.ToolStarted{ID: "2", Name: "shell", Summary: "mkdir x"})
+	store.Show(core.ToolFinished{ID: "2", Output: ""})
+	store.Show(core.ToolStarted{ID: "3", Name: "shell", Summary: "echo"})
+	store.Show(core.ToolFinished{ID: "3", Output: " \r\n\n"})
+	store.Show(core.ReplyStarted{})
+	store.Show(core.ReplyText{Text: "done"})
+
+	// when
+	// ... the transcript is rendered
+	texts := renderedTexts(store, 30)
+
+	// then
+	// ... each command is followed by exactly one blank line
+	want := []string{"$ true", "", "$ mkdir x", "", "$ echo", "", "done", ""}
+	if !slices.Equal(texts, want) {
+		t.Errorf("lines %q\nwant %q", texts, want)
+	}
+}
+
+func TestTrailingWhitespaceDoesNotTakeTailRows(t *testing.T) {
+	// given
+	// ... output ending in CRLF and a whitespace-only line
+	store := NewStore()
+	store.Show(core.ToolStarted{ID: "1", Name: "shell", Summary: "x"})
+	store.Show(core.ToolFinished{ID: "1", Output: "1\r\n2\r\n3\r\n4\r\n5\r\n6\r\nok\r\n  \n"})
+
+	// when
+	// ... the transcript is rendered
+	texts := renderedTexts(store, 30)
+
+	// then
+	// ... the tail ends at the real last line and the count is right
+	want := []string{"$ x", "  ··· 3 lines above", "  4", "  5", "  6", "  ok", ""}
+	if !slices.Equal(texts, want) {
+		t.Errorf("lines %q\nwant %q", texts, want)
+	}
+}
+
+func TestFoldingNeedsMoreThanOneHiddenLineAndCountsInTheSingular(t *testing.T) {
+	// given
+	// ... a five-line output, a six-line output and a one-line skill
+	store := NewStore()
+	store.Show(core.ToolStarted{ID: "1", Name: "shell", Summary: "seq 5"})
+	store.Show(core.ToolFinished{ID: "1", Output: "1\n2\n3\n4\n5"})
+	store.Show(core.ToolStarted{ID: "2", Name: "shell", Summary: "seq 6"})
+	store.Show(core.ToolFinished{ID: "2", Output: "1\n2\n3\n4\n5\n6"})
+	store.Show(core.SkillLoaded{Name: "s", Content: "one"})
+
+	// when
+	// ... the transcript is rendered
+	texts := renderedTexts(store, 30)
+
+	// then
+	// ... five lines show whole, six fold two away, and one line is "1 line"
+	want := []string{
+		"$ seq 5", "  1", "  2", "  3", "  4", "  5", "",
+		"$ seq 6", "  ··· 2 lines above", "  3", "  4", "  5", "  6", "",
+		"$ skill s", "  ··· 1 line", "",
+	}
+	if !slices.Equal(texts, want) {
+		t.Errorf("lines %q\nwant %q", texts, want)
+	}
+}
+
+func TestLongLinesFoldByScreenRows(t *testing.T) {
+	// given
+	// ... output that is one very long line, and output whose last line is long
+	store := NewStore()
+	store.Show(core.ToolStarted{ID: "1", Name: "shell", Summary: "curl"})
+	store.Show(core.ToolFinished{ID: "1", Output: strings.Repeat("x", 500)})
+	store.Show(core.ToolStarted{ID: "2", Name: "shell", Summary: "cat"})
+	store.Show(core.ToolFinished{ID: "2", Output: "a\nb\n" + strings.Repeat("y", 500)})
+
+	// when
+	// ... the transcript is rendered 40 wide
+	texts := renderedTexts(store, 40)
+
+	// then
+	// ... each shows only a marker and four rows, saying part of a line is hidden
+	if len(texts) != 2*(1+1+4+1) {
+		t.Fatalf("lines %q", texts)
+	}
+	if texts[1] != "  ··· part of 1 line above" || texts[8] != "  ··· 2 lines and part of 1 above" {
+		t.Errorf("markers %q / %q", texts[1], texts[8])
+	}
+}
+
+func TestSkillsTheModelLoadsFoldLikeSkillsTheUserLoads(t *testing.T) {
+	// given
+	// ... the model calling the skill tool, then a shell command
+	store := NewStore()
+	store.Show(core.ToolStarted{ID: "1", Name: core.SkillToolName, Summary: "skill review"})
+	store.Show(core.ToolFinished{ID: "1", Output: "<skill_content>\nbody\nmore\nmore\nmore\n</skill_content>"})
+	store.Show(core.ToolStarted{ID: "2", Name: "shell", Summary: "ls"})
+	store.Show(core.ToolFinished{ID: "2", Output: "a"})
+
+	// when
+	// ... the transcript is rendered
+	texts := renderedTexts(store, 40)
+
+	// then
+	// ... the skill shows only its size, and the shell output is unaffected
+	want := []string{"$ skill review", "  ··· 6 lines", "", "$ ls", "  a", ""}
+	if !slices.Equal(texts, want) {
+		t.Errorf("lines %q\nwant %q", texts, want)
+	}
+}

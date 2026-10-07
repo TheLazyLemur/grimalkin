@@ -8,9 +8,10 @@ import (
 	"grimalkin/internal/core"
 )
 
-// foldedTailLines is how much of a collapsed tool output stays visible. The
-// last lines are kept because builds, tests and greps end with the result.
-const foldedTailLines = 4
+// foldedTailRows is how much of a collapsed tool output stays visible, in
+// screen rows. The last rows are kept because builds, tests and greps end
+// with the result.
+const foldedTailRows = 4
 
 type entryKind int
 
@@ -42,11 +43,14 @@ type Store struct {
 	mu      sync.Mutex
 	entries []*entry
 	reply   *entry
-	changed chan struct{}
+	// skillCalls holds the IDs of running skill tool calls, so their
+	// content folds like a skill loaded with /name.
+	skillCalls map[string]bool
+	changed    chan struct{}
 }
 
 func NewStore() *Store {
-	return &Store{changed: make(chan struct{}, 1)}
+	return &Store{changed: make(chan struct{}, 1), skillCalls: map[string]bool{}}
 }
 
 func (s *Store) AddInfo(text string) {
@@ -74,19 +78,28 @@ func (s *Store) Show(event core.Event) {
 		s.reply.text.WriteString(event.Text)
 		s.mu.Unlock()
 	case core.ToolStarted:
+		s.mu.Lock()
+		if event.Name == core.SkillToolName {
+			s.skillCalls[event.ID] = true
+		}
+		s.mu.Unlock()
 		s.add(entryCommand, event.Summary)
 	case core.ToolFinished:
-		if event.IsError {
+		s.mu.Lock()
+		isSkill := s.skillCalls[event.ID]
+		delete(s.skillCalls, event.ID)
+		s.mu.Unlock()
+		switch {
+		case event.IsError:
 			s.add(entryError, event.Output)
-		} else {
+		case isSkill:
+			s.addHidden(event.Output)
+		default:
 			s.add(entryOutput, event.Output)
 		}
 	case core.SkillLoaded:
 		s.add(entryCommand, "skill "+event.Name)
-		s.add(entryOutput, event.Content)
-		s.mu.Lock()
-		s.entries[len(s.entries)-1].hideAll = true
-		s.mu.Unlock()
+		s.addHidden(event.Content)
 	case core.TurnDiscarded:
 		s.add(entryError, event.Reason+" (turn discarded)")
 	default:
@@ -96,9 +109,17 @@ func (s *Store) Show(event core.Event) {
 }
 
 func (s *Store) add(kind entryKind, text string) {
-	s.mu.Lock()
-	e := &entry{kind: kind}
+	s.addEntry(&entry{kind: kind}, text)
+}
+
+// addHidden adds skill content, which collapses to its line count alone.
+func (s *Store) addHidden(text string) {
+	s.addEntry(&entry{kind: entryOutput, hideAll: true}, text)
+}
+
+func (s *Store) addEntry(e *entry, text string) {
 	e.text.WriteString(text)
+	s.mu.Lock()
 	s.entries = append(s.entries, e)
 	s.mu.Unlock()
 }
@@ -161,8 +182,21 @@ func (s *Store) render(width int) (lines []screenLine) {
 		if e.kind != entryOutput && len(lines) > first {
 			lines[first].startsEntry = true
 		}
+		// A command draws no trailing blank so its output can hang under it;
+		// when nothing will, the blank goes here instead.
+		if e.kind == entryCommand && !followedByResult(s.entries, i) {
+			lines = append(lines, screenLine{owner: e, fold: fold})
+		}
 	}
 	return lines
+}
+
+func followedByResult(entries []*entry, i int) bool {
+	if i+1 >= len(entries) {
+		return false
+	}
+	next := entries[i+1]
+	return (next.kind == entryOutput || next.kind == entryError) && next.text.Len() > 0
 }
 
 func renderEntry(e *entry, width int) []screenLine {
@@ -193,44 +227,62 @@ func renderEntry(e *entry, width int) []screenLine {
 func turnDivider(width int) screenLine {
 	length := min(width, max(3, width/6))
 	cells := styledCells(strings.Repeat(" ", (width-length)/2)+strings.Repeat("─", length), colorFaint, 0)
-	return screenLine{cells: cells, prefixLen: len(cells)}
+	return screenLine{cells: cells, prefixLen: len(cells), decoration: true}
 }
 
 // renderOutput draws tool output. Expanded, it is all there behind a gutter.
 // Collapsed, it is dimmer and indented under the command, and only its last
-// lines show, after a faint count of what's hidden.
+// screen rows show, after a faint count of what's hidden.
 func renderOutput(e *entry, text string, width int) []screenLine {
-	text = strings.TrimRight(text, "\n")
+	text = strings.TrimRight(strings.ReplaceAll(text, "\r\n", "\n"), " \t\r\n")
+	if text == "" {
+		return nil
+	}
 	if e.expanded {
 		return wrapPlainText(text, width, colorShellOutput, 0, gutter(), gutter())
 	}
-	all := strings.Split(text, "\n")
-	visible := all
+	lineCount := strings.Count(text, "\n") + 1
 	if e.hideAll {
-		visible = nil
-	} else if len(all) > foldedTailLines {
-		visible = all[len(all)-foldedTailLines:]
+		return []screenLine{foldMarker("··· "+plural(lineCount, "line"), width)}
 	}
-	var lines []screenLine
-	if hidden := len(all) - len(visible); hidden > 0 {
-		label := fmt.Sprintf("··· %d lines", hidden)
-		if len(visible) > 0 {
-			label += " above"
+	indent := styledCells("  ", 0, 0)
+	rows := wrapPlainText(text, width, colorFolded, 0, indent, indent)
+	// Folding a single row away saves nothing: the marker takes its place.
+	if len(rows) <= foldedTailRows+1 {
+		return rows
+	}
+	hidden, visible := rows[:len(rows)-foldedTailRows], rows[len(rows)-foldedTailRows:]
+	whole := 0
+	for _, row := range hidden {
+		if row.breakBefore == breakHard {
+			whole++
 		}
-		lines = append(lines, foldMarker(label, width))
 	}
-	if len(visible) > 0 {
-		indent := styledCells("  ", 0, 0)
-		lines = append(lines, wrapPlainText(strings.Join(visible, "\n"), width, colorFolded, 0, indent, indent)...)
+	label := "··· " + plural(whole, "line") + " above"
+	if visible[0].breakBefore != breakHard {
+		// The first visible row continues a line that starts above.
+		whole--
+		if whole == 0 {
+			label = "··· part of 1 line above"
+		} else {
+			label = "··· " + plural(whole, "line") + " and part of 1 above"
+		}
 	}
-	return lines
+	return append([]screenLine{foldMarker(label, width)}, visible...)
 }
 
-// foldMarker counts hidden lines. Its cells count as prefix, so yanks skip it.
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
+}
+
+// foldMarker counts hidden lines. It is a decoration, so yanks skip it.
 func foldMarker(label string, width int) screenLine {
 	cells := styledCells("  "+label, colorFaint, 0)
 	for cellsWidth(cells) > width {
 		cells = cells[:len(cells)-1]
 	}
-	return screenLine{cells: cells, prefixLen: len(cells)}
+	return screenLine{cells: cells, prefixLen: len(cells), decoration: true}
 }

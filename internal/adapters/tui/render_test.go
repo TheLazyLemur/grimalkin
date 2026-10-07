@@ -79,3 +79,19 @@ func TestBulletsWrapAtWordsWithAHangingIndent(t *testing.T) {
 		t.Errorf("lines %q", []string{lineText(lines[0]), lineText(lines[len(lines)-1])})
 	}
 }
+
+func TestYankKeepsBlankLinesInsideCodeBlocks(t *testing.T) {
+	// given
+	// ... a fenced code block with a blank line, whose blank row is all gutter
+	lines := renderMarkdown("```\na\n\nb\n```", 40)
+
+	// when
+	// ... the whole block is yanked
+	got := string(yankText(lines, position{0, 0}, position{len(lines) - 1, endOfLine}, true))
+
+	// then
+	// ... the blank line survives
+	if got != "a\n\nb" {
+		t.Errorf("yanked %q", got)
+	}
+}

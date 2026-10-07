@@ -93,7 +93,7 @@ func (v *transcriptView) handleKey(lines []screenLine, height int, register *[]r
 	case key == keyCtrlW:
 		v.pendingWindowCmd = true
 		return viewNoop
-	case v.visual == visualOff && char == 'z':
+	case v.visual == visualOff && pendingKey == 0 && char == 'z':
 		v.pendingKey = 'z'
 		return viewNoop
 	case key == keyEsc:
@@ -481,9 +481,8 @@ func yankText(lines []screenLine, start, end position, linewise bool) []rune {
 	wrote := false
 	for i := start.line; i <= end.line; i++ {
 		line := lines[i]
-		// Decorations (dividers, fold markers) are all prefix: skip them
-		// whole, including the line break they would add.
-		if len(line.cells) > 0 && line.prefixLen == len(line.cells) {
+		// Skip decorations whole, including the line break they would add.
+		if line.decoration {
 			continue
 		}
 		if wrote {

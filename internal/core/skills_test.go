@@ -39,7 +39,7 @@ func skillLibrary() *mockSkills {
 
 func skillCall(id, name, arguments string) ToolCall {
 	input, _ := json.Marshal(map[string]string{"name": name, "arguments": arguments})
-	return toolCall(id, skillToolName, string(input))
+	return toolCall(id, SkillToolName, string(input))
 }
 
 func TestTheSystemPromptListsOnlySkillsTheModelMayLoad(t *testing.T) {
@@ -97,7 +97,7 @@ func TestTheSkillToolOffersOnlyModelSkillsByName(t *testing.T) {
 
 	// then
 	// ... the skill tool's name is an enum of the model's skills
-	if len(specs) != 1 || specs[0].Name != skillToolName {
+	if len(specs) != 1 || specs[0].Name != SkillToolName {
 		t.Fatalf("tools = %v", specs)
 	}
 	var schema struct {
@@ -134,7 +134,7 @@ func TestTheModelLoadsASkillAndGetsItsRenderedContentUncapped(t *testing.T) {
 	if !slices.Equal(skills.renders, []string{"review|a b"}) {
 		t.Errorf("renders = %v", skills.renders)
 	}
-	if started := transcript.events[1]; started != (ToolStarted{ID: "toolu_1", Name: skillToolName, Summary: "skill review a b"}) {
+	if started := transcript.events[1]; started != (ToolStarted{ID: "toolu_1", Name: SkillToolName, Summary: "skill review a b"}) {
 		t.Errorf("event = %#v", started)
 	}
 	if got := lastToolResult(model.requests, 1); got.Content != big || got.IsError {
@@ -319,7 +319,7 @@ func TestAFailedSlashCommandDiscardsTheTurnWithoutCallingTheModel(t *testing.T) 
 func TestAToolNamedLikeTheSkillToolPanics(t *testing.T) {
 	// given
 	// ... an agent with skills and a tool named like the skill tool
-	a := newAgent(&mockModel{}, &mockTranscript{}, &mockTool{name: skillToolName})
+	a := newAgent(&mockModel{}, &mockTranscript{}, &mockTool{name: SkillToolName})
 	a.Skills = skillLibrary()
 
 	// when / then

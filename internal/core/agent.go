@@ -129,8 +129,8 @@ func (a *Agent) checkWiring() {
 		}
 		names[name] = true
 	}
-	if a.Skills != nil && names[skillToolName] {
-		panic(fmt.Sprintf("tool %q clashes with the skill tool", skillToolName))
+	if a.Skills != nil && names[SkillToolName] {
+		panic(fmt.Sprintf("tool %q clashes with the skill tool", SkillToolName))
 	}
 }
 
