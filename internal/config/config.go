@@ -46,7 +46,25 @@ type Selection struct {
 	// Search configures the search tool. Nil when the config has no search
 	// block, and the tool is left out.
 	Search *Search
+
+	// Web configures the web tools. Nil when no usable provider is
+	// configured, and the tools are left out.
+	Web *Web
+
+	// WebInfo is the startup line for the web tools: the provider in use,
+	// or why there is none.
+	WebInfo string
 }
+
+// Web is the resolved web block: the provider in use and its key.
+type Web struct {
+	Provider string
+	APIKey   string
+}
+
+// webProviders are the names a web block may hold. main.go has an adapter
+// for each. A variable so tests can add a second.
+var webProviders = []string{"ollama"}
 
 // Search is the resolved search block: the Jev key and model.
 type Search struct {
@@ -69,6 +87,11 @@ type file struct {
 	Providers map[string]provider `json:"providers"`
 	SkillDirs []string            `json:"skillDirs"`
 	Search    *search             `json:"search"`
+	Web       map[string]web      `json:"web"`
+}
+
+type web struct {
+	APIKey string `json:"apiKey"`
 }
 
 type search struct {
@@ -151,6 +174,20 @@ func (f file) resolve() (Selection, error) {
 		return Selection{}, errors.New(`search: "mapAtStartup" needs "map": true`)
 	}
 
+	webNames := make([]string, 0, len(f.Web))
+	for name := range f.Web {
+		webNames = append(webNames, name)
+	}
+	sort.Strings(webNames)
+	for _, name := range webNames {
+		if !slices.Contains(webProviders, name) {
+			return Selection{}, fmt.Errorf("web.%s: unknown provider (known: %s)", name, strings.Join(webProviders, ", "))
+		}
+		if f.Web[name].APIKey == "" {
+			return Selection{}, fmt.Errorf(`web.%s: missing "apiKey"`, name)
+		}
+	}
+
 	p, ok := f.Providers[f.Provider]
 	if !ok {
 		return Selection{}, fmt.Errorf("provider %q is not declared", f.Provider)
@@ -201,6 +238,24 @@ func (f file) resolve() (Selection, error) {
 			searchSel = &Search{APIKey: searchKey, Model: model, Map: f.Search.Map, MapAtStartup: f.Search.MapAtStartup}
 		}
 	}
+	// The web tools are optional in the same way. One provider serves them:
+	// the first by name, and only its key command is run.
+	var webSel *Web
+	webInfo := "web: off (no provider configured)"
+	if len(webNames) > 0 {
+		name := webNames[0]
+		webKey, err := resolveKey(f.Web[name].APIKey)
+		switch {
+		case err != nil:
+			webInfo = fmt.Sprintf("web: off (%s: %v)", name, err)
+		case len(webNames) > 1:
+			webSel = &Web{Provider: name, APIKey: webKey}
+			webInfo = fmt.Sprintf("web: on · %s · %d providers configured (%s), using the first", name, len(webNames), strings.Join(webNames, ", "))
+		default:
+			webSel = &Web{Provider: name, APIKey: webKey}
+			webInfo = fmt.Sprintf("web: on · %s · search queries and fetched URLs go to it", name)
+		}
+	}
 	return Selection{
 		Provider:  f.Provider,
 		Wire:      p.Wire,
@@ -212,6 +267,8 @@ func (f file) resolve() (Selection, error) {
 		SkillDirs: f.SkillDirs,
 		Search:    searchSel,
 		SearchOff: searchOff,
+		Web:       webSel,
+		WebInfo:   webInfo,
 	}, nil
 }
 

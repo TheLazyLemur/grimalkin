@@ -54,27 +54,23 @@ to.
     the round's tool results (never edited into earlier messages, so the
     cache and thinking stay valid). Queuing is TUI-only; steering touches
     the core loop.
-11. **Web search and web fetch.** Today the model can only reach the web
-    through `curl` in the shell, with no search at all. Add both as
-    grimalkin's own tools, backed by Ollama's web search and web fetch
-    APIs, so they work the same whichever provider runs the model.
-12. **Classify tool.** Jev answers one fixed question today, inside
+11. **Classify tool.** Jev answers one fixed question today, inside
     search. A `classify` tool takes a list of paths and a yes/no question
     the model writes, reads the files itself, scores them through search's
     existing worker pool and returns only the hits: 200 classifications in
     one call, with none of the file contents in context. Needs a cap on
     paths per call, since it sends whatever it is pointed at.
-13. **Code mode, in Lua.** A tool whose input is a Lua script, run in an
+12. **Code mode, in Lua.** A tool whose input is a Lua script, run in an
     embedded VM with no file, network or OS libraries. Every other tool is
     a function on `tools`. Only what the script returns reaches the model,
     so a chain where one step's output decides the next (classify files,
     hand each hit to a subagent, classify the reports) takes one turn
     instead of three, with the intermediate results kept out of context.
     Needs a timeout and an output cap. Worth building once the model is
-    seen doing such chains by hand with 12 and subagents. After
+    seen doing such chains by hand with 11 and subagents. After
     [pi's code mode](https://pi.dev/docs/latest/codemode), which uses
     JavaScript.
-14. **Search chunks by function and paragraph.** Search cuts files into
+13. **Search chunks by function and paragraph.** Search cuts files into
     8 KB runs of whole lines, so a range can start mid-function and one
     excerpt can hold four unrelated ones. Cut at declarations instead, and
     at paragraphs in prose: ranges name a whole function, Jev scores an

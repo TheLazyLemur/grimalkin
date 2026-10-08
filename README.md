@@ -152,6 +152,37 @@ have written, is ignored and built again.
 > `bin`, `dist`, …), files over 256 KB, binary files, or files that look
 > like they hold a key or password.
 
+
+## Web
+
+`web_search` and `web_fetch` let the model search the web and read a page.
+They are on once the config has a `web` block naming a provider:
+
+```json
+"web": {
+  "ollama": { "apiKey": "!cat ~/.ollama_key" }
+}
+```
+
+Only `ollama` exists so far: [Ollama's web search and fetch](https://docs.ollama.com/capabilities/web-search),
+which needs a key from an ollama.com account, not the placeholder a local
+Ollama server takes. `apiKey` works like a provider's.
+
+One provider serves both tools. If the block names several, the first by
+name is used, and only its key command runs. A line at startup always says
+which provider is in use, or that web is off: with no block, an empty one,
+or a key command that fails or prints nothing. A name grimalkin doesn't know
+stops it from starting.
+
+Every query the model searches for and every URL it fetches goes to the
+provider. What comes back is text from the web, read by a model that can run
+shell commands: the tools tell it to treat that text as data, which lowers
+the risk of a page steering it but does not remove it.
+
+`web_search` returns up to 10 results (5 unless the model asks), sharing
+20 KB of content between them. `web_fetch` returns the first 20 KB of a
+page and up to 4 KB of its links.
+
 ## Skills
 
 grimalkin loads [Agent Skills](https://agentskills.io): directories holding a

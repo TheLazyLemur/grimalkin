@@ -21,15 +21,29 @@ import (
 
 var maxTokens = 32_000
 
+// webProviders builds the web provider for each name config accepts.
+var webProviders = map[string]func(key string) tools.WebProvider{
+	"ollama": func(key string) tools.WebProvider { return tools.NewOllamaWeb(key) },
+}
+
 // toolCatalogue is every tool the model gets. search joins the shell when the
 // config has a search block, and is then available in every project. The
-// search tool is returned too (nil without one), for its repo map.
+// search tool is returned too (nil without one), for its repo map. The web
+// tools join when the config has a usable web provider.
 func toolCatalogue(sel config.Selection, cwd string) ([]core.Tool, *tools.Search) {
 	catalogue := []core.Tool{tools.Shell{}}
 	var search *tools.Search
 	if sel.Search != nil {
 		search = tools.NewSearch(cwd, sel.Search.APIKey, sel.Search.Model, sel.Search.Map)
 		catalogue = append(catalogue, search)
+	}
+	if sel.Web != nil {
+		build, ok := webProviders[sel.Web.Provider]
+		if !ok {
+			panic(fmt.Sprintf("no adapter for web provider %q", sel.Web.Provider))
+		}
+		provider := build(sel.Web.APIKey)
+		catalogue = append(catalogue, tools.NewWebSearch(provider), tools.NewWebFetch(provider))
 	}
 	return catalogue, search
 }
@@ -114,6 +128,7 @@ func run() error {
 			search.StartMap()
 		}
 	}
+	store.AddInfo(sel.WebInfo)
 	for _, w := range warnings {
 		store.AddInfo(w)
 	}

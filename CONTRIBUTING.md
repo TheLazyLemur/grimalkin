@@ -13,7 +13,8 @@ internal/core/            conversation, turn loop, tool rules, events,
 internal/adapters/
   anthropic/              outbound: Model port over anthropic-sdk-go
   tools/                  outbound: tools (tools.Shell, tools.Search and
-                          its Jev client)
+                          its Jev client, tools.WebSearch and
+                          tools.WebFetch and their Ollama client)
   skills/                 outbound: Skills port over SKILL.md directories,
                           rendering arguments, variables and !`cmd`
   clipboard/              outbound: tui.Clipboard via pbcopy
@@ -92,6 +93,18 @@ The file is repository content, so a clone can bring one: it is ignored
 unless its version and model match and every role, concept and vocabulary
 word is one a build could have written. Raise `searchMapVersion` when the
 roles or questions change.
+
+**Web.** `tools.WebSearch` and `tools.WebFetch` (`web.go`) share one
+`tools.WebProvider`, the seam for swapping the service behind them. The
+config's `web` block is keyed by provider name; `config` validates the names,
+picks the first alphabetically, runs only its key command and writes the
+startup line. To add a provider: implement `WebProvider` in
+`internal/adapters/tools` (as `web_ollama.go` does, since an adapter may not
+import another), add its name to `webProviders` in `internal/config` and its
+constructor to `webProviders` in `main.go`. A provider whose service lacks
+search or fetch supplies the missing one itself. The tools bound their own
+output from the front, because the core's cap keeps the tail, and a
+provider's errors never echo a response body, since the model reads them.
 
 **Skills.** The `Skills` port lists skills and renders one; the adapter does
 all file and shell I/O. The core owns the rest: the catalog in the system

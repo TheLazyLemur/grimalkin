@@ -87,6 +87,7 @@ func TestAValidConfigResolvesTheSelectedModelWithoutRunningOtherKeyCommands(t *t
 		Model:    "glm",
 		Thinking: "enabled",
 		Effort:   "high",
+		WebInfo:  "web: off (no provider configured)",
 	}
 	if !reflect.DeepEqual(sel, want) {
 		t.Errorf("selection = %+v, want %+v", sel, want)
@@ -266,6 +267,9 @@ func TestInvalidConfigsAreRejected(t *testing.T) {
 		{"map at startup without the map", func(c raw) { c["search"] = raw{"apiKey": "k", "mapAtStartup": true} }, `search: "mapAtStartup" needs "map": true`},
 		{"unknown search key", func(c raw) { c["search"] = raw{"apiKey": "k", "baseUrl": "x"} }, `unknown field "baseUrl"`},
 		{"silent key command", func(c raw) { c.provider("ollama")["apiKey"] = "!true" }, `providers.ollama: api key command printed nothing`},
+		{"unknown web provider", func(c raw) { c["web"] = raw{"nope": raw{"apiKey": "k"}} }, `web.nope: unknown provider (known: ollama)`},
+		{"web provider without a key", func(c raw) { c["web"] = raw{"ollama": raw{}} }, `web.ollama: missing "apiKey"`},
+		{"unknown web provider key", func(c raw) { c["web"] = raw{"ollama": raw{"apiKey": "k", "baseUrl": "x"}} }, `unknown field "baseUrl"`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -283,6 +287,92 @@ func TestInvalidConfigsAreRejected(t *testing.T) {
 			// ... loading fails, naming what is wrong
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("err = %v, want it to contain %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestAWebBlockResolvesItsProvidersKey(t *testing.T) {
+	// given
+	// ... a web block with ollama, its key from a command
+	c := validConfig()
+	c["web"] = raw{"ollama": raw{"apiKey": `!printf 'ow-1\n'`}}
+	path := writeConfig(t, c)
+
+	// when
+	// ... it is loaded
+	sel, err := Load(path)
+
+	// then
+	// ... web carries the provider and its trimmed key, and the line names it
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := &Web{Provider: "ollama", APIKey: "ow-1"}
+	if !reflect.DeepEqual(sel.Web, want) {
+		t.Errorf("web = %+v, want %+v", sel.Web, want)
+	}
+	if want := "web: on · ollama · search queries and fetched URLs go to it"; sel.WebInfo != want {
+		t.Errorf("info = %q, want %q", sel.WebInfo, want)
+	}
+}
+
+func TestOfSeveralWebProvidersTheFirstByNameIsUsedAndTheLineSaysSo(t *testing.T) {
+	// given
+	// ... a second known provider, and a web block with both, ollama's key command failing
+	webProviders = []string{"ollama", "brave"}
+	t.Cleanup(func() { webProviders = []string{"ollama"} })
+	c := validConfig()
+	c["web"] = raw{"ollama": raw{"apiKey": "!false"}, "brave": raw{"apiKey": "b-1"}}
+	path := writeConfig(t, c)
+
+	// when
+	// ... it is loaded
+	sel, err := Load(path)
+
+	// then
+	// ... brave is used, ollama's key command never ran, and the line lists both
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := &Web{Provider: "brave", APIKey: "b-1"}
+	if !reflect.DeepEqual(sel.Web, want) {
+		t.Errorf("web = %+v, want %+v", sel.Web, want)
+	}
+	if want := "web: on · brave · 2 providers configured (brave, ollama), using the first"; sel.WebInfo != want {
+		t.Errorf("info = %q, want %q", sel.WebInfo, want)
+	}
+}
+
+func TestWithoutAUsableWebProviderThereAreNoWebToolsButGrimalkinStillStarts(t *testing.T) {
+	cases := []struct {
+		name string
+		web  raw
+		want string
+	}{
+		{"empty block", raw{}, "web: off (no provider configured)"},
+		{"failing key command", raw{"ollama": raw{"apiKey": "!exit 4"}}, "web: off (ollama: api key command: exit status 4)"},
+		{"silent key command", raw{"ollama": raw{"apiKey": "!true"}}, "web: off (ollama: api key command printed nothing)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// given
+			// ... a web block with no usable provider
+			c := validConfig()
+			c["web"] = tc.web
+			path := writeConfig(t, c)
+
+			// when
+			// ... it is loaded
+			sel, err := Load(path)
+
+			// then
+			// ... loading succeeds without web, and says why
+			if err != nil {
+				t.Fatal(err)
+			}
+			if sel.Web != nil || sel.WebInfo != tc.want {
+				t.Errorf("web = %+v, info = %q, want none and %q", sel.Web, sel.WebInfo, tc.want)
 			}
 		})
 	}
