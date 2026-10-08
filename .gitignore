@@ -1,2 +1,3 @@
 bin/
 .claude/.headroom_wrap_*
+.claude/worktrees/
