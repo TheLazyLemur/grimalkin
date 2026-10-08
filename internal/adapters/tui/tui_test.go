@@ -565,3 +565,69 @@ func TestTheIndicatorIsDroppedBeforeTheModeOrState(t *testing.T) {
 		t.Errorf("status %q", status)
 	}
 }
+
+func scrolledUpModel() *model {
+	store := NewStore()
+	store.Show(core.ReplyStarted{})
+	store.Show(core.ReplyText{Text: strings.Repeat("x\n", 60)})
+	m := newModel(&fakeAgent{}, store, nopClipboard{}, "fake", nil)
+	m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
+	m.focusTranscript()
+	pressKeys(m, "gg")
+	return m
+}
+
+func TestTypingWhileScrolledUpLeavesTheTranscriptWhereItWas(t *testing.T) {
+	// given
+	// ... a long transcript scrolled to its top
+	m := scrolledUpModel()
+
+	// when
+	// ... a message is typed and more output arrives
+	pressKeys(m, "ihello")
+	m.store.Show(core.ReplyText{Text: "more\n"})
+	m.Update(storeChangedMsg{})
+
+	// then
+	// ... the input has the text and the transcript still shows its top
+	if string(m.editor.text) != "hello" || m.transcript.scrollTop != 0 {
+		t.Errorf("input %q, scrollTop %d", string(m.editor.text), m.transcript.scrollTop)
+	}
+}
+
+func TestSendingFromAScrolledUpTranscriptGoesToTheBottomAndFollows(t *testing.T) {
+	// given
+	// ... a message typed with the transcript scrolled to its top
+	m := scrolledUpModel()
+	pressKeys(m, "ihello")
+
+	// when
+	// ... it is sent and the reply arrives
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m.store.Show(core.ReplyText{Text: "more\n"})
+	m.Update(storeChangedMsg{})
+
+	// then
+	// ... the transcript shows its last line
+	if want := len(m.lines) - m.transcriptHeight; m.transcript.scrollTop != want {
+		t.Errorf("scrollTop %d, want %d", m.transcript.scrollTop, want)
+	}
+}
+
+func TestLeavingTheInputForAScrolledUpTranscriptKeepsTheCursor(t *testing.T) {
+	// given
+	// ... a message being typed with the transcript scrolled to its top
+	m := scrolledUpModel()
+	pressKeys(m, "ihello")
+
+	// when
+	// ... Esc and k go back to the transcript
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	pressKeys(m, "k")
+
+	// then
+	// ... the cursor is where it was left, not on the last line
+	if m.focus != focusTranscript || m.transcript.cursor.line != 0 || m.transcript.scrollTop != 0 {
+		t.Errorf("focus %v, cursor %+v, scrollTop %d", m.focus, m.transcript.cursor, m.transcript.scrollTop)
+	}
+}

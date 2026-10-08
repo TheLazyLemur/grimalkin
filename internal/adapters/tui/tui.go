@@ -288,7 +288,16 @@ func (m *model) handleInputKey(char rune, key keyCode) tea.Cmd {
 
 func (m *model) focusTranscript() {
 	m.focus = focusTranscript
-	m.transcript.focusLastLine(m.lines, m.transcriptHeight)
+	if m.atBottom() {
+		m.transcript.focusLastLine(m.lines, m.transcriptHeight)
+	}
+}
+
+// atBottom reports whether the transcript showed its last line when it was
+// last laid out. Only then does it follow new output while the input has
+// focus, so typing leaves a scrolled-up transcript where it is.
+func (m *model) atBottom() bool {
+	return m.transcript.scrollTop >= len(m.lines)-m.transcriptHeight
 }
 
 func (m *model) send() tea.Cmd {
@@ -296,6 +305,8 @@ func (m *model) send() tea.Cmd {
 		return nil
 	}
 	prompt := string(m.editor.text)
+	// Sending goes back to the bottom, wherever the transcript was left.
+	m.transcript.scrollTop = len(m.lines)
 	if strings.TrimSpace(prompt) == indexCommand {
 		m.editor.reset()
 		return m.index()
@@ -345,13 +356,14 @@ func (m *model) contentWidth() int {
 }
 
 func (m *model) layout() {
+	follow := m.focus == focusInput && m.atBottom()
 	m.inputRows, m.inputCursor = layoutInput(&m.editor, m.contentWidth(), max(1, m.height/3))
 	if m.transcript.search.typing {
 		m.inputRows = m.inputRows[:1]
 	}
 	m.transcriptHeight = max(1, m.height-1-len(m.inputRows)-m.topPadding())
 	m.lines = m.store.render(m.contentWidth())
-	if m.focus == focusInput {
+	if follow {
 		m.transcript.scrollTop = max(0, len(m.lines)-m.transcriptHeight)
 	} else {
 		m.transcript.clampAndScroll(m.lines, m.transcriptHeight)
