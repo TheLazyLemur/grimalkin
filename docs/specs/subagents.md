@@ -116,8 +116,10 @@ conversation and all, which reads the parent's cached prompt cheaply.
 - **Ports.** The core needs a `Model` for each allowed subagent model, keyed
   by `provider/model`, alongside the parent's. Transcript events carry the
   number of the agent they belong to (the parent being agent 0), plus events
-  for a child's lifecycle: started (number, model), progress (tool count),
-  finished, failed and cancelled.
+  for a child's lifecycle: waiting (number, model), started (number, model),
+  progress (tool count), finished, failed and cancelled. Lifecycle events
+  belong to the parent, since its transcript shows them, and name the child
+  they are about.
 - **Cancelling.** Cancelling the parent's turn cancels every child it
   started. Cancelling one child ends only that child's turn; the parent's
   call returns "cancelled by user" as an error result and the parent goes
