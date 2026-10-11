@@ -86,8 +86,8 @@ func skillSummary(input json.RawMessage) string {
 	return strings.TrimSpace(SkillToolName + " " + *in.Name + " " + in.Arguments)
 }
 
-// runSkillTool loads a skill for the model. pending holds this response's
-// earlier tool results, not yet in the history.
+// runSkillTool loads a skill for the model. pending holds the results of
+// this response's earlier skill calls, not yet in the history.
 func (a *Agent) runSkillTool(ctx context.Context, input json.RawMessage, pending []ToolResult) (string, error) {
 	in, err := parseSkillInput(input)
 	if err != nil {

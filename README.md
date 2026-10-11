@@ -4,16 +4,16 @@ A terminal coding agent with vim-style navigation, written in Go.
 
 grimalkin speaks the Anthropic Messages API through the official Go SDK, so it
 works with Claude or any compatible endpoint (e.g. Ollama). It renders with
-Ultraviolet and has two tools, a shell and
-[search](#search), plus [skills](#skills).
+Ultraviolet and has a shell, [search](#search), [web](#web) tools,
+[skills](#skills) and [subagents](#subagents).
 
 > **Warning:** the shell is **unsandboxed**. Every command the model chooses
 > runs as `/bin/sh -c` in the current directory, with your permissions and no
 > timeout.
 
 **Contents:** [Quick start](#quick-start) ·
-[Configuration](#configuration) · [Search](#search) · [Skills](#skills) ·
-[Keys](#keys)
+[Configuration](#configuration) · [Search](#search) · [Web](#web) ·
+[Skills](#skills) · [Subagents](#subagents) · [Keys](#keys)
 
 Working on grimalkin itself? See [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -230,6 +230,34 @@ The skill reaches the model without its frontmatter, wrapped in a
 `<skill_content>` block that names its directory and lists its bundled files.
 Loading a skill whose rendered content is already in the conversation sends a
 short note instead of a second copy.
+
+## Subagents
+
+The `agent` tool lets the model hand a self-contained task to a subagent: a
+child agent that starts with only that task, works through it with its own
+tools and context, and returns only its final reply. The reading behind the
+answer stays out of your conversation. The tool is always on and needs no
+config.
+
+A subagent runs on the same provider and model as the session. It gets the
+shell and your skills, but not search or the web tools, and it cannot start
+subagents of its own. The reply comes back to the model as `[agent N]`
+followed by the text; passing that number back as `agent` sends the same
+subagent a follow-up, with its history intact. Subagents are numbered from 1
+and last until you quit.
+
+Several `agent` calls in one response run at the same time, as do a
+response's other tool calls. At most five subagents run at once; further
+ones wait for a slot. The parent's turn waits for all of them.
+
+Each subagent shows as one line in the transcript, updated in place:
+`agent 1 · ollama/glm-5.3-flash:cloud · 3 tools · running`, or `waiting`
+while it has no slot. Its work and its reply are not shown.
+
+`Ctrl-C` stops the turn and every subagent it started.
+
+> **Warning:** a subagent's shell is the same **unsandboxed** shell, and its
+> commands do not appear in the transcript: only the count of them does.
 
 ## Keys
 

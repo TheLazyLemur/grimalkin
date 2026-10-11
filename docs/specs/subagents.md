@@ -105,13 +105,21 @@ conversation and all, which reads the parent's cached prompt cheaply.
   "already loaded" dedup within a response keeps working. Results go back in
   call order. At most five children run at once across the session; further
   `agent` calls wait for a slot.
+- **Status lines.** Each child has one line in the parent's transcript,
+  updated in place: `agent N · <model> · <count> tools · <state>`. A child
+  waiting for a slot shows `agent N · <model> · waiting`, with no tool
+  count. The status line is the `agent` call's only entry in the parent's
+  transcript: the call gets no tool started or finished entry, and the
+  child's reply is not shown there.
 - **Numbering and lifetime.** Children are numbered 1, 2, 3… per session and
   live, with their histories, until grimalkin exits.
 - **Ports.** The core needs a `Model` for each allowed subagent model, keyed
   by `provider/model`, alongside the parent's. Transcript events carry the
   number of the agent they belong to (the parent being agent 0), plus events
-  for a child's lifecycle: started (number, model), progress (tool count),
-  finished, failed and cancelled.
+  for a child's lifecycle: waiting (number, model), started (number, model),
+  progress (tool count), finished, failed and cancelled. Lifecycle events
+  belong to the parent, since its transcript shows them, and name the child
+  they are about.
 - **Cancelling.** Cancelling the parent's turn cancels every child it
   started. Cancelling one child ends only that child's turn; the parent's
   call returns "cancelled by user" as an error result and the parent goes
@@ -155,12 +163,8 @@ conversation and all, which reads the parent's cached prompt cheaply.
 
 ## Open Questions
 
-- What exactly a child's status line shows while it waits for a slot.
 - Whether `:ls` lists the parent, and how a cancelled or failed child is
   marked there.
-- How the parent's transcript shows `agent` calls while children run, beyond
-  the status lines (the usual tool started/finished entries, or only the
-  status lines).
 
 ## Out of Scope
 

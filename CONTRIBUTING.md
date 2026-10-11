@@ -9,7 +9,8 @@ implement or drive them, and one composition root wires them together.
 main.go                   composition root: loads config, wires adapters
 internal/config/          loads and validates ~/.config/grimalkin/config.json
 internal/core/            conversation, turn loop, tool rules, events,
-                          ports (Model, Tool, Skills, Transcript)
+                          the skill and agent tools, ports (Model, Tool,
+                          Skills, Transcript)
 internal/adapters/
   anthropic/              outbound: Model port over anthropic-sdk-go
   tools/                  outbound: tools (tools.Shell, tools.Search and
@@ -37,15 +38,37 @@ belong with their users.
 
 **Events.** The core reports a turn to `Transcript` as events
 (`internal/core/events.go`): reply started, reply text, tool started, tool
-finished, skill loaded, turn discarded. The TUI decides how each looks.
+finished, skill loaded, turn discarded. `Show` takes the number of the agent
+the event belongs to beside the event, the parent being 0; the core emits
+through `Agent.show`, which passes it. A child's lifecycle has its own events,
+each naming the child: waiting, started, progress, finished, failed,
+cancelled. The TUI decides how each looks: it draws a child's lifecycle as
+one status line in the parent's transcript, updated in place, which is all
+an `agent` call shows there, and for now shows only agent 0's turn events.
 
 **Tools.** A tool implements `core.Tool`: a spec, a `Summary` of a call as a
 command line, and `Run`, which returns output or an error and must honour its
 context. Tools never touch the screen. The core looks tools up by name, answers
 unknown names with an error, and caps each result at 30 KB (keeping the tail).
 
+A response's tool calls run at the same time and their results go back in
+call order, so a tool's methods and `Transcript.Show` are called from several
+goroutines at once. Skill tool calls are the exception: they run first and
+one at a time, because each is deduplicated against the ones before it.
+Cancelling the turn cancels every running call. A panic in one call cancels
+the others and is raised again from `RunTurn`, with the call's stack in its
+message.
+
+The core has two tools of its own, which are not in any list: `skill`, offered
+when the model may load at least one skill, and `agent`, offered when
+`Agent.SubagentTools` is set (see Skills and Subagents below). A tool in
+either list may not take those names.
+
 To add a tool, add a type to `internal/adapters/tools` and list it in
-`toolCatalogue` in `main.go`.
+`toolCatalogue` in `main.go`. That gives it to the parent only. Children get
+the list `main.go` sets as `Agent.SubagentTools`, for now the shell alone; a
+child also has `skill`, because it shares the parent's `Skills`. `main.go`
+sets `Agent.ModelName` to `provider/model` from the config selection.
 
 **Search.** `tools.Search` lists files with `rg --files` (so `.gitignore`
 holds), filters and keyword-scores them in Go, and sends the best excerpt of
@@ -113,6 +136,23 @@ prompt, the `skill` tool (only when the model may load at least one skill),
 identical content, so a discarded turn takes its skills with it. Skill
 content is exempt from the 30 KB tool result cap; the adapter caps each
 command's output instead. See `docs/specs/skills.md`.
+
+**Subagents.** The core offers the `agent` tool when `Agent.SubagentTools`
+is set (`ModelName` is then required, for the status line). A call claims a
+child in call order, before the calls run, so numbers follow the order the
+model wrote them and a second call for the same child is answered "busy". A
+child is an `Agent` with its own number and history, the parent's model,
+transcript and skills, the parent's system prompt plus a subagent note, and
+the subagent tool list, so it is never offered `agent`. Its turn runs under
+the parent's tool call context: cancelling the parent cancels it. At most five children run at once
+(`maxRunningChildren`): a call requests its slot when it claims its child,
+so slots go out in call order, and a child with none reports waiting until
+one is released; cancelled while waiting, it ends cancelled without having
+started. The call's
+result is `[agent N]`, a newline and the text streamed by the child's last
+response, capped below the number; a discarded turn gives the reason the
+same way, as an error. Children live in the parent for the session. See
+`docs/specs/subagents.md`.
 
 **Messages.** Assistant message content is opaque to the core: the provider
 stores the SDK's own `MessageParam` (thinking blocks and signatures intact)

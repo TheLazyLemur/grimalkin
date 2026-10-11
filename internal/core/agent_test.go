@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // Port mocks.
@@ -17,17 +20,26 @@ type mockReply struct {
 	err  error // non-nil: the call fails with this error
 }
 
+// mockModel is called by several children at once, each taking the next
+// scripted reply.
 type mockModel struct {
-	replies  []mockReply
-	requests [][]Message // the messages each call received
+	replies []mockReply
+	// hold, when set, runs before a call takes its reply and may block; an
+	// error from it fails the call without using a reply.
+	hold func(ctx context.Context, req ModelRequest) error
+
+	mu       sync.Mutex
+	requests [][]Message    // the messages each call received
+	calls    []ModelRequest // each call's whole request
 }
 
-func (m *mockModel) Stream(_ context.Context, req ModelRequest, onText func(string)) (ModelResponse, error) {
-	if len(m.requests) >= len(m.replies) {
-		panic("mock model called more times than scripted")
+func (m *mockModel) Stream(ctx context.Context, req ModelRequest, onText func(string)) (ModelResponse, error) {
+	if m.hold != nil {
+		if err := m.hold(ctx, req); err != nil {
+			return ModelResponse{}, err
+		}
 	}
-	reply := m.replies[len(m.requests)]
-	m.requests = append(m.requests, slices.Clone(req.Messages))
+	reply := m.next(req)
 	if reply.text != "" {
 		onText(reply.text)
 	}
@@ -37,9 +49,23 @@ func (m *mockModel) Stream(_ context.Context, req ModelRequest, onText func(stri
 	return reply.resp, nil
 }
 
+func (m *mockModel) next(req ModelRequest) mockReply {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.requests) >= len(m.replies) {
+		panic("mock model called more times than scripted")
+	}
+	reply := m.replies[len(m.requests)]
+	m.requests = append(m.requests, slices.Clone(req.Messages))
+	m.calls = append(m.calls, req)
+	return reply
+}
+
 type mockTool struct {
-	name   string
-	run    func(ctx context.Context) (string, error)
+	name string
+	run  func(ctx context.Context) (string, error)
+
+	mu     sync.Mutex
 	inputs []string
 }
 
@@ -48,7 +74,9 @@ func (m *mockTool) Spec() ToolSpec { return ToolSpec{Name: m.name} }
 func (m *mockTool) Summary(input json.RawMessage) string { return m.name + " " + string(input) }
 
 func (m *mockTool) Run(ctx context.Context, input json.RawMessage) (string, error) {
+	m.mu.Lock()
 	m.inputs = append(m.inputs, string(input))
+	m.mu.Unlock()
 	return m.run(ctx)
 }
 
@@ -56,12 +84,51 @@ func returning(content string, err error) func(context.Context) (string, error) 
 	return func(context.Context) (string, error) { return content, err }
 }
 
-type mockTranscript struct {
-	events []Event
+// await waits for done, or fails after long enough that it was never coming.
+func await(done <-chan struct{}) error {
+	select {
+	case <-done:
+		return nil
+	case <-time.After(5 * time.Second):
+		return errors.New("timed out waiting")
+	}
 }
 
-func (m *mockTranscript) Show(event Event) {
+// panicOf runs f and returns what it panicked with, or nil.
+func panicOf(f func()) (panicked any) {
+	defer func() { panicked = recover() }()
+	f()
+	return nil
+}
+
+// mockTranscript is shown events by several tool calls at once.
+type mockTranscript struct {
+	mu     sync.Mutex
+	events []Event
+	agents []int // the agent number passed with each event
+
+	watched Event
+	seen    chan struct{}
+}
+
+func (m *mockTranscript) Show(agent int, event Event) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.events = append(m.events, event)
+	m.agents = append(m.agents, agent)
+	if m.seen != nil && event == m.watched {
+		close(m.seen)
+		m.seen = nil
+	}
+}
+
+// watch returns a channel closed when event is next shown.
+func (m *mockTranscript) watch(event Event) <-chan struct{} {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	seen := make(chan struct{})
+	m.watched, m.seen = event, seen
+	return seen
 }
 
 func (m *mockTranscript) last() Event {
@@ -103,7 +170,7 @@ func TestAToolCallIsShownRunAndItsResultSentBackToTheModel(t *testing.T) {
 		ToolStarted{ID: "toolu_1", Name: "list", Summary: `list {"dir":"."}`},
 		ToolFinished{ID: "toolu_1", Output: "a.txt"},
 		ReplyStarted{},
-		ReplyText{"done"},
+		ReplyText{Text: "done"},
 	}
 	if !slices.Equal(transcript.events, want) {
 		t.Errorf("events = %#v\nwant %#v", transcript.events, want)
@@ -165,35 +232,110 @@ func TestAnUnknownToolIsAnsweredWithAnErrorWithoutRunningAnything(t *testing.T) 
 	}
 }
 
-func TestCancellingDuringAToolStopsItAndDiscardsTheTurn(t *testing.T) {
+func TestToolCallsInOneResponseRunAtTheSameTimeAndAnswerInCallOrder(t *testing.T) {
 	// given
-	// ... a tool that runs until its context is cancelled, and the user cancelling while it runs
+	// ... a response calling two tools that each wait for the other to start, the first also for the second to end
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_1", "wait", `{}`), toolCall("toolu_2", "wait", `{}`)}, Content: "A1"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_1", "slow", `{}`), toolCall("toolu_2", "quick", `{}`)}, Content: "A1"}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: "A2"}},
 	}}
-	transcript := &mockTranscript{}
-	a := newAgent(model, transcript)
-	tool := &mockTool{name: "wait", run: func(ctx context.Context) (string, error) {
-		a.Cancel()
-		<-ctx.Done()
-		return "", ctx.Err()
+	slowStarted, quickStarted, quickEnded := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	slow := &mockTool{name: "slow", run: func(context.Context) (string, error) {
+		close(slowStarted)
+		return "slow done", errors.Join(await(quickStarted), await(quickEnded))
 	}}
-	a.Tools = []Tool{tool}
+	quick := &mockTool{name: "quick", run: func(context.Context) (string, error) {
+		defer close(quickEnded)
+		close(quickStarted)
+		return "quick done", await(slowStarted)
+	}}
+	a := newAgent(model, &mockTranscript{}, slow, quick)
 
 	// when
 	// ... a turn runs
 	a.RunTurn("go")
 
 	// then
-	// ... the tool saw the cancellation, the second call never ran, the model wasn't called again and the turn is gone
-	if len(tool.inputs) != 1 || len(model.requests) != 1 {
-		t.Errorf("tool ran %d times, model called %d times", len(tool.inputs), len(model.requests))
+	// ... both ran to the end and their results went back in the order they were called
+	want := []ToolResult{{ToolUseID: "toolu_1", Content: "slow done"}, {ToolUseID: "toolu_2", Content: "quick done"}}
+	if got := model.requests[1][len(model.requests[1])-1].ToolResults; !slices.Equal(got, want) {
+		t.Errorf("tool results = %+v\nwant %+v", got, want)
 	}
-	if last := transcript.last(); last != (TurnDiscarded{"cancelled"}) {
+}
+
+func TestCancellingDuringConcurrentToolCallsStopsThemAllAndDiscardsTheTurn(t *testing.T) {
+	// given
+	// ... two tools that run until their context is cancelled, and the user cancelling once both are running
+	model := &mockModel{replies: []mockReply{
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_1", "wait", `{}`), toolCall("toolu_2", "cancel", `{}`)}, Content: "A1"}},
+	}}
+	transcript := &mockTranscript{}
+	a := newAgent(model, transcript)
+	waiting := make(chan struct{})
+	stopped := make(chan error, 2)
+	wait := &mockTool{name: "wait", run: func(ctx context.Context) (string, error) {
+		close(waiting)
+		stopped <- await(ctx.Done())
+		return "", ctx.Err()
+	}}
+	cancel := &mockTool{name: "cancel", run: func(ctx context.Context) (string, error) {
+		started := await(waiting)
+		a.Cancel()
+		stopped <- errors.Join(started, await(ctx.Done()))
+		return "", ctx.Err()
+	}}
+	a.Tools = []Tool{wait, cancel}
+
+	// when
+	// ... a turn runs
+	a.RunTurn("go")
+
+	// then
+	// ... both tools saw the cancellation, the model wasn't called again and the turn is gone
+	if first, second := <-stopped, <-stopped; first != nil || second != nil {
+		t.Errorf("tools stopped with %v and %v, want cancelled", first, second)
+	}
+	if len(model.requests) != 1 {
+		t.Errorf("model called %d times", len(model.requests))
+	}
+	if last := transcript.last(); last != (TurnDiscarded{Reason: "cancelled"}) {
 		t.Errorf("last event = %#v", last)
 	}
 	if len(a.messages) != 0 {
 		t.Errorf("len(messages) = %d, want 0", len(a.messages))
+	}
+}
+
+func TestAPanicInOneOfSeveralToolCallsStopsTheOthersAndPanicsTheTurn(t *testing.T) {
+	// given
+	// ... a tool that panics while another runs until its context is cancelled
+	model := &mockModel{replies: []mockReply{
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_1", "wait", `{}`), toolCall("toolu_2", "broken", `{}`)}, Content: "A1"}},
+	}}
+	waiting := make(chan struct{})
+	stopped := make(chan error, 1)
+	wait := &mockTool{name: "wait", run: func(ctx context.Context) (string, error) {
+		close(waiting)
+		stopped <- await(ctx.Done())
+		return "", ctx.Err()
+	}}
+	broken := &mockTool{name: "broken", run: func(context.Context) (string, error) {
+		<-waiting
+		panic("nil map")
+	}}
+	a := newAgent(model, &mockTranscript{}, wait, broken)
+
+	// when
+	// ... a turn runs
+	panicked := panicOf(func() { a.RunTurn("go") })
+
+	// then
+	// ... the other tool was stopped and the turn panicked with the tool's panic
+	if err := <-stopped; err != nil {
+		t.Errorf("the other tool: %v, want cancelled", err)
+	}
+	if !strings.Contains(fmt.Sprint(panicked), "nil map") {
+		t.Errorf("panic = %v", panicked)
 	}
 }
 
@@ -213,7 +355,7 @@ func TestAFailedModelCallDiscardsTheTurnFromTheHistory(t *testing.T) {
 
 	// then
 	// ... the error is shown and none of the turn's messages are kept
-	if last := transcript.last(); last != (TurnDiscarded{"HTTP 500: overloaded"}) {
+	if last := transcript.last(); last != (TurnDiscarded{Reason: "HTTP 500: overloaded"}) {
 		t.Errorf("last event = %#v", last)
 	}
 	if len(a.messages) != 0 {
@@ -240,5 +382,38 @@ func TestLongToolOutputIsSentToTheModelTruncatedFromTheFront(t *testing.T) {
 	content := lastToolResult(model.requests, 1).Content
 	if !strings.HasPrefix(content, "[output truncated: first ") || !strings.HasSuffix(content, "\nFAILED") {
 		t.Errorf("content = %q…%q", content[:40], content[len(content)-20:])
+	}
+}
+
+func TestEveryEventOfTheParentsTurnReportsAgentZero(t *testing.T) {
+	// given
+	// ... a turn that loads a skill, streams text, runs a tool and is then stopped by the provider
+	model := &mockModel{replies: []mockReply{
+		{text: "looking", resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_1", "list", `{}`)}, Content: "A1"}},
+		{resp: ModelResponse{StopReason: StopOther, StopDetail: "refusal"}},
+	}}
+	transcript := &mockTranscript{}
+	a := newAgent(model, transcript, &mockTool{name: "list", run: returning("a.txt", nil)})
+	a.Skills = skillLibrary()
+
+	// when
+	// ... the parent runs it
+	a.RunTurn("/deploy prod")
+
+	// then
+	// ... an event of every kind was shown, each as agent 0
+	var kinds []string
+	for _, event := range transcript.events {
+		kinds = append(kinds, fmt.Sprintf("%T", event))
+	}
+	wantKinds := []string{
+		"core.SkillLoaded", "core.ReplyStarted", "core.ReplyText", "core.ToolStarted",
+		"core.ToolFinished", "core.ReplyStarted", "core.TurnDiscarded",
+	}
+	if !slices.Equal(kinds, wantKinds) {
+		t.Errorf("events = %v\nwant %v", kinds, wantKinds)
+	}
+	if !slices.Equal(transcript.agents, make([]int, len(wantKinds))) {
+		t.Errorf("agents = %v, want all 0", transcript.agents)
 	}
 }

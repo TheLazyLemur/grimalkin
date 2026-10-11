@@ -93,6 +93,10 @@ func run() error {
 		System:     core.SystemPrompt(osName(), cwd, library.List()),
 		Tools:      catalogue,
 		Skills:     library,
+		// Children get the shell only; they share Skills, so the core gives
+		// them the skill tool. The core never offers them the agent tool.
+		SubagentTools: []core.Tool{tools.Shell{}},
+		ModelName:     sel.Provider + "/" + sel.Model,
 	}
 
 	effort := sel.Effort

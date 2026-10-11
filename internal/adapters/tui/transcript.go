@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
@@ -43,14 +44,29 @@ type Store struct {
 	mu      sync.Mutex
 	entries []*entry
 	reply   *entry
-	// skillCalls holds the IDs of running skill tool calls, so their
-	// content folds like a skill loaded with /name.
-	skillCalls map[string]bool
-	changed    chan struct{}
+	// running holds the tool calls that have started and not finished, by
+	// call ID, so each result lands under its own command.
+	running map[string]runningCall
+	// children holds each child's latest status line, by child number.
+	children map[int]*childStatus
+	changed  chan struct{}
+}
+
+type runningCall struct {
+	// command is nil for an agent call, which shows as its child's status
+	// line alone.
+	command *entry
+	// skill marks a skill tool call, whose content folds like a skill
+	// loaded with /name.
+	skill bool
 }
 
 func NewStore() *Store {
-	return &Store{changed: make(chan struct{}, 1), skillCalls: map[string]bool{}}
+	return &Store{
+		changed:  make(chan struct{}, 1),
+		running:  map[string]runningCall{},
+		children: map[int]*childStatus{},
+	}
 }
 
 func (s *Store) AddInfo(text string) {
@@ -63,7 +79,11 @@ func (s *Store) addUser(prompt string) {
 	s.notify()
 }
 
-func (s *Store) Show(event core.Event) {
+func (s *Store) Show(agent int, event core.Event) {
+	// Only the parent's events are shown until each agent has a buffer.
+	if agent != 0 {
+		return
+	}
 	switch event := event.(type) {
 	case core.ReplyStarted:
 		s.add(entryReply, "")
@@ -78,34 +98,150 @@ func (s *Store) Show(event core.Event) {
 		s.reply.text.WriteString(event.Text)
 		s.mu.Unlock()
 	case core.ToolStarted:
-		s.mu.Lock()
-		if event.Name == core.SkillToolName {
-			s.skillCalls[event.ID] = true
-		}
-		s.mu.Unlock()
-		s.add(entryCommand, event.Summary)
+		s.startCall(event)
 	case core.ToolFinished:
-		s.mu.Lock()
-		isSkill := s.skillCalls[event.ID]
-		delete(s.skillCalls, event.ID)
-		s.mu.Unlock()
-		switch {
-		case event.IsError:
-			s.add(entryError, event.Output)
-		case isSkill:
-			s.addHidden(event.Output)
-		default:
-			s.add(entryOutput, event.Output)
-		}
+		s.finishCall(event)
 	case core.SkillLoaded:
 		s.add(entryCommand, "skill "+event.Name)
 		s.addHidden(event.Content)
 	case core.TurnDiscarded:
 		s.add(entryError, event.Reason+" (turn discarded)")
+	case core.ChildWaiting:
+		s.beginChild(event.Child, event.Model, childWaiting)
+	case core.ChildStarted:
+		s.beginChild(event.Child, event.Model, childRunning)
+	case core.ChildProgress:
+		s.progressChild(event.Child, event.Tools)
+	case core.ChildFinished:
+		s.endChild(event.Child, childFinished)
+	case core.ChildFailed:
+		// The reason goes to the model, as the call's result.
+		s.endChild(event.Child, childFailed)
+	case core.ChildCancelled:
+		s.endChild(event.Child, childCancelled)
 	default:
 		panic(fmt.Sprintf("unhandled event %T", event))
 	}
 	s.notify()
+}
+
+// startCall adds a tool call's command and records the call as running, in
+// one step: calls can start at once, and each must record its own command.
+func (s *Store) startCall(event core.ToolStarted) {
+	command := &entry{kind: entryCommand}
+	command.text.WriteString(event.Summary)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.running[event.ID]; ok {
+		panic(fmt.Sprintf("tool call %q started twice", event.ID))
+	}
+	if event.Name == core.AgentToolName {
+		s.running[event.ID] = runningCall{}
+		return
+	}
+	s.entries = append(s.entries, command)
+	s.running[event.ID] = runningCall{command: command, skill: event.Name == core.SkillToolName}
+}
+
+// finishCall puts a tool call's result under its command rather than at the
+// end, since calls run at once finish in any order.
+func (s *Store) finishCall(event core.ToolFinished) {
+	result := &entry{kind: entryOutput}
+	result.text.WriteString(event.Output)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	call, ok := s.running[event.ID]
+	if !ok {
+		panic(fmt.Sprintf("tool call %q finished without starting", event.ID))
+	}
+	delete(s.running, event.ID)
+	if call.command == nil {
+		return
+	}
+	switch {
+	case event.IsError:
+		result.kind = entryError
+	case call.skill:
+		result.hideAll = true
+	}
+	s.entries = slices.Insert(s.entries, slices.Index(s.entries, call.command)+1, result)
+}
+
+const (
+	childWaiting   = "waiting"
+	childRunning   = "running"
+	childFinished  = "finished"
+	childFailed    = "failed"
+	childCancelled = "cancelled"
+)
+
+// childStatus is one run of a child and the line that shows it.
+type childStatus struct {
+	line   *entry
+	number int
+	model  string
+	state  string
+	// started is whether the child has had a slot, and so has a tool count.
+	started bool
+	tools   int
+}
+
+func (c *childStatus) ended() bool {
+	return c.state != childWaiting && c.state != childRunning
+}
+
+// redraw rewrites the line in place. The entry's rendering is dropped by
+// hand, since a new count can leave the text the same length.
+func (c *childStatus) redraw() {
+	text := fmt.Sprintf("agent %d · %s", c.number, c.model)
+	if c.started {
+		text += " · " + plural(c.tools, "tool")
+	}
+	c.line.text.Reset()
+	c.line.text.WriteString(text + " · " + c.state)
+	c.line.lines = nil
+}
+
+// beginChild shows a child as waiting or running. A waiting child that gets
+// a slot keeps its line; a child run again after it ended gets a new one, so
+// the earlier run stays as it ended.
+func (s *Store) beginChild(number int, model, state string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	child := s.children[number]
+	switch {
+	case child != nil && child.state == childWaiting && state == childRunning:
+	case child == nil || child.ended():
+		child = &childStatus{line: &entry{kind: entryInfo}, number: number}
+		s.children[number] = child
+		s.entries = append(s.entries, child.line)
+	default:
+		panic(fmt.Sprintf("child %d is %s while already %s", number, state, child.state))
+	}
+	child.model, child.state, child.started = model, state, state == childRunning
+	child.redraw()
+}
+
+func (s *Store) progressChild(number, tools int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	child := s.children[number]
+	if child == nil || child.state != childRunning {
+		panic(fmt.Sprintf("progress from child %d, which is not running", number))
+	}
+	child.tools = tools
+	child.redraw()
+}
+
+func (s *Store) endChild(number int, state string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	child := s.children[number]
+	if child == nil || child.ended() {
+		panic(fmt.Sprintf("child %d %s without waiting or running", number, state))
+	}
+	child.state = state
+	child.redraw()
 }
 
 func (s *Store) add(kind entryKind, text string) {
