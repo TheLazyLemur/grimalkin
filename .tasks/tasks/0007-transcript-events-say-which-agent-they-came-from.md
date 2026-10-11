@@ -2,7 +2,7 @@
 id: 7
 title: Transcript events say which agent they came from
 slice: 1
-status: todo
+status: in-progress
 depends_on: []
 ---
 

@@ -39,14 +39,11 @@ to start a subagent is refused.
 
 ## Open in this slice
 
-- What a child's status line shows while it waits for one of the five slots.
-  Recorded in: the subagents spec.
-- Whether `agent` calls also get the usual tool started/finished entries in
-  the parent's transcript, or only the status line. Recorded in: the
-  subagents spec.
+None. The subagents spec (Status lines) settles the waiting state and the
+`agent` call's entries.
 
 ## Tasks
-- [ ] #4 Decide the waiting status line and agent tool entries
+- [x] #4 Decide the waiting status line and agent tool entries
 - [ ] #5 Tool output appears under the command that produced it
 - [ ] #6 A response's tool calls run at the same time (after #5)
 - [ ] #7 Transcript events say which agent they came from
@@ -55,7 +52,7 @@ to start a subagent is refused.
 - [ ] #10 Each child has a status line in the parent's transcript (after #4, #7)
 - [ ] #11 grimalkin starts with subagents wired in (after #8)
 
-Can start now: #4, #5, #7
+Can start now: #5, #7
 
 ```mermaid
 graph TD

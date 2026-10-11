@@ -2,7 +2,7 @@
 id: 5
 title: Tool output appears under the command that produced it
 slice: 1
-status: todo
+status: in-progress
 depends_on: []
 ---
 
