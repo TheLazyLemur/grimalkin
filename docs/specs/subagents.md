@@ -167,7 +167,7 @@ conversation and all, which reads the parent's cached prompt cheaply.
 - Steering a running agent mid-turn, parent or child (wishlist #11).
 - Children starting children.
 - Named agent types with their own prompts and tools.
-- Children running in the background while the parent goes on (wishlist #9).
+- Children running in the background while the parent goes on (wishlist #12).
 - Saving children to disk and resuming them in a later session.
 - Splits; buffers are full screen.
 - Configuring a child's tool list in the config file.
