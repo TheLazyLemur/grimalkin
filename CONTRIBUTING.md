@@ -18,7 +18,7 @@ internal/adapters/
   skills/                 outbound: Skills port over SKILL.md directories,
                           rendering arguments, variables and !`cmd`
   clipboard/              outbound: tui.Clipboard via pbcopy
-  tui/                    inbound: Bubble Tea UI, editor, navigation,
+  tui/                    inbound: Ultraviolet UI, editor, navigation,
                           markdown; drives the core via tui.Agent
 scripts/check-imports.sh  enforces the import rules
 ```

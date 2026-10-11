@@ -3,17 +3,17 @@ package tui
 import (
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 )
 
 func TestNewlineChordsAreTranslatedApartFromEnter(t *testing.T) {
 	// given
-	// ... Enter and the three newline chords as Bubble Tea reports them
-	presses := []tea.KeyPressMsg{
-		{Code: tea.KeyEnter},
-		{Code: tea.KeyEnter, Mod: tea.ModShift},
-		{Code: tea.KeyEnter, Mod: tea.ModAlt},
-		{Code: 'j', Mod: tea.ModCtrl},
+	// ... Enter and the three newline chords as Ultraviolet reports them
+	presses := []uv.KeyPressEvent{
+		{Code: uv.KeyEnter},
+		{Code: uv.KeyEnter, Mod: uv.ModShift},
+		{Code: uv.KeyEnter, Mod: uv.ModAlt},
+		{Code: 'j', Mod: uv.ModCtrl},
 	}
 
 	// when

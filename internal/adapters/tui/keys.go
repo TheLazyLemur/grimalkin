@@ -1,7 +1,7 @@
 package tui
 
 import (
-	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 )
 
 type keyCode int
@@ -48,11 +48,11 @@ var specialKeys = map[string]keyCode{
 	"right":       keyRight,
 }
 
-func translateKey(msg tea.KeyPressMsg) (rune, keyCode) {
+func translateKey(msg uv.KeyPressEvent) (rune, keyCode) {
 	if key, ok := specialKeys[msg.String()]; ok {
 		return 0, key
 	}
-	if msg.Mod&(tea.ModCtrl|tea.ModAlt|tea.ModMeta|tea.ModSuper) != 0 {
+	if msg.Mod&(uv.ModCtrl|uv.ModAlt|uv.ModMeta|uv.ModSuper) != 0 {
 		return 0, keyNone
 	}
 	chars := []rune(msg.Text)

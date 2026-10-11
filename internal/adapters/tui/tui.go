@@ -2,12 +2,16 @@ package tui
 
 import (
 	"fmt"
+	"os"
+	"os/signal"
+	"runtime/debug"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
+	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/ultraviolet/screen"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -37,13 +41,83 @@ const indexCommand = "/index"
 // indicatorPoll is how often a live indicator is read.
 const indicatorPoll = time.Second
 
-// Run starts the UI. repoMap may be nil.
-func Run(agent Agent, store *Store, clipboard Clipboard, modelName string, repoMap RepoMap) error {
+// Run starts the UI and returns when the user quits. repoMap may be nil.
+func Run(agent Agent, store *Store, clipboard Clipboard, modelName string, repoMap RepoMap) (err error) {
 	if agent == nil || store == nil || clipboard == nil {
 		panic("tui ports not wired")
 	}
-	_, err := tea.NewProgram(newModel(agent, store, clipboard, modelName, repoMap)).Run()
-	return err
+	m := newModel(agent, store, clipboard, modelName, repoMap)
+
+	term := uv.DefaultTerminal()
+	scr := term.Screen()
+	scr.EnterAltScreen()
+	scr.EnableBracketedPaste()
+	// Shift+Enter only differs from Enter in terminals that speak the Kitty
+	// keyboard protocol or xterm's modifyOtherKeys, so ask for both.
+	scr.SetKeyboardEnhancements(&uv.KeyboardEnhancements{DisambiguateEscapeCodes: true})
+	scr.WriteString(ansi.SetModifyOtherKeys2)
+	if err := term.Start(); err != nil {
+		return err
+	}
+	// Deferred, so a panic restores the terminal before it is reported.
+	defer func() {
+		scr.WriteString(ansi.ResetModifyOtherKeys)
+		if stopErr := term.Stop(); err == nil {
+			err = stopErr
+		}
+	}()
+
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(signals)
+
+	if repoMap != nil {
+		m.readIndicator()
+	}
+	for !m.quit {
+		select {
+		case ev := <-term.Events():
+			if size, ok := ev.(uv.WindowSizeEvent); ok {
+				scr.Resize(size.Width, size.Height)
+			}
+			m.handle(ev)
+		case <-store.changed:
+			m.layout()
+		case panicked := <-m.turnDone:
+			m.finishTurn(panicked)
+		case <-m.indicatorDue:
+			m.readIndicator()
+		case <-signals:
+			return nil
+		}
+
+		cursor, shown := m.draw(scr)
+		if err := present(scr, cursor, shown); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// present sends what was drawn, and the cursor, to the terminal.
+func present(scr *uv.TerminalScreen, cursor uv.Position, shown bool) error {
+	scr.SetCursorPosition(cursor.X, cursor.Y)
+	if shown != scr.CursorVisible() {
+		if shown {
+			scr.ShowCursor()
+		} else {
+			scr.HideCursor()
+		}
+	}
+	scr.Render()
+	if err := scr.Flush(); err != nil {
+		return err
+	}
+	// Flush queues the cursor's move in the renderer, and only Render hands
+	// the renderer's output on. Without a second pass a frame that moves
+	// nothing but the cursor shows it one frame late.
+	scr.Render()
+	return scr.Flush()
 }
 
 func newModel(agent Agent, store *Store, clipboard Clipboard, modelName string, repoMap RepoMap) *model {
@@ -53,7 +127,7 @@ func newModel(agent Agent, store *Store, clipboard Clipboard, modelName string, 
 		clipboard: clipboard,
 		modelName: modelName,
 		repoMap:   repoMap,
-		styles:    map[[2]attr]lipgloss.Style{},
+		turnDone:  make(chan string, 1),
 	}
 	m.editor.reset()
 	return m
@@ -66,12 +140,6 @@ const (
 	focusTranscript
 )
 
-type storeChangedMsg struct{}
-
-type turnFinishedMsg struct{}
-
-type indicatorTickMsg struct{}
-
 type model struct {
 	agent     Agent
 	store     *Store
@@ -80,6 +148,9 @@ type model struct {
 	repoMap   RepoMap
 
 	indicatorText string
+	// indicatorDue fires when a live indicator is to be read again. Nil
+	// while it isn't live.
+	indicatorDue <-chan time.Time
 
 	editor     editor
 	transcript transcriptView
@@ -87,6 +158,9 @@ type model struct {
 	register   []rune
 	statusNote string
 	busy       bool
+	quit       bool
+	// turnDone gets a value when a turn ends: what it panicked with, or "".
+	turnDone chan string
 
 	width, height int
 
@@ -94,77 +168,65 @@ type model struct {
 	transcriptHeight int
 	inputRows        []screenLine
 	inputCursor      position
-
-	styles map[[2]attr]lipgloss.Style
 }
 
-func (m *model) Init() tea.Cmd {
-	if m.repoMap == nil {
-		return m.waitForStoreChange()
-	}
-	return tea.Batch(m.waitForStoreChange(), m.readIndicator())
-}
-
-// readIndicator reads the indicator now and, while it is live, again every
+// readIndicator reads the indicator now and, while it is live, again after
 // indicatorPoll.
-func (m *model) readIndicator() tea.Cmd {
+func (m *model) readIndicator() {
 	text, live := m.repoMap.Indicator()
 	m.indicatorText = text
-	if !live {
-		return nil
-	}
-	return tea.Tick(indicatorPoll, func(time.Time) tea.Msg { return indicatorTickMsg{} })
-}
-
-func (m *model) waitForStoreChange() tea.Cmd {
-	return func() tea.Msg {
-		<-m.store.changed
-		return storeChangedMsg{}
+	m.indicatorDue = nil
+	if live {
+		m.indicatorDue = time.After(indicatorPoll)
 	}
 }
 
-func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width, m.height = msg.Width, msg.Height
-	case storeChangedMsg:
-		cmd = m.waitForStoreChange()
-	case turnFinishedMsg:
-		m.busy = false
-	case indicatorTickMsg:
-		cmd = m.readIndicator()
-	case tea.PasteMsg:
+// handle applies a terminal event and lays the screen out again.
+func (m *model) handle(ev uv.Event) {
+	switch ev := ev.(type) {
+	case uv.WindowSizeEvent:
+		m.width, m.height = ev.Width, ev.Height
+	case uv.PasteEvent:
 		if m.focus == focusInput && m.editor.mode == modeInsert {
-			text := strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(msg.Content)
+			text := strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(ev.Content)
 			m.editor.insertText([]rune(text))
 		}
-	case tea.KeyPressMsg:
-		cmd = m.handleKey(translateKey(msg))
+	case uv.KeyPressEvent:
+		m.handleKey(translateKey(ev))
 	}
 	m.layout()
-	return m, cmd
 }
 
-func (m *model) handleKey(char rune, key keyCode) tea.Cmd {
+// finishTurn ends the turn runTurn started. A turn that panicked panics again
+// here, on the UI's goroutine, where Run restores the terminal first.
+func (m *model) finishTurn(panicked string) {
+	if panicked != "" {
+		panic(panicked)
+	}
+	m.busy = false
+}
+
+func (m *model) handleKey(char rune, key keyCode) {
 	m.statusNote = ""
 	if m.focus == focusInput {
 		m.transcript.visual = visualOff
 	}
 	if key == keyCtrlC {
-		if !m.busy {
-			return tea.Quit
+		if m.busy {
+			m.agent.Cancel()
+		} else {
+			m.quit = true
 		}
-		m.agent.Cancel()
-		return nil
+		return
 	}
 	if m.focus == focusTranscript {
-		return m.handleTranscriptKey(char, key)
+		m.handleTranscriptKey(char, key)
+		return
 	}
-	return m.handleInputKey(char, key)
+	m.handleInputKey(char, key)
 }
 
-func (m *model) handleTranscriptKey(char rune, key keyCode) tea.Cmd {
+func (m *model) handleTranscriptKey(char rune, key keyCode) {
 	switch m.transcript.handleKey(m.lines, m.transcriptHeight, &m.register, char, key) {
 	case viewInsert:
 		m.focus = focusInput
@@ -178,7 +240,7 @@ func (m *model) handleTranscriptKey(char rune, key keyCode) tea.Cmd {
 		m.clipboard.Copy(string(m.register))
 		m.statusNote = fmt.Sprintf("yanked %d chars", len(m.register))
 	case viewQuit:
-		return tea.Quit
+		m.quit = true
 	case viewToggleFold:
 		if len(m.lines) > 0 {
 			if fold := m.lines[m.transcript.cursor.line].fold; fold != nil {
@@ -190,7 +252,6 @@ func (m *model) handleTranscriptKey(char rune, key keyCode) tea.Cmd {
 	case viewCollapseAll:
 		m.refold(func() { m.store.setAllFolds(false) })
 	}
-	return nil
 }
 
 // refold changes folds, then puts the cursor back where it was relative to
@@ -263,27 +324,26 @@ func ownedRange(lines []screenLine, e *entry) (start, end int) {
 	return
 }
 
-func (m *model) handleInputKey(char rune, key keyCode) tea.Cmd {
+func (m *model) handleInputKey(char rune, key keyCode) {
 	if key == keyNewline {
 		if m.editor.mode == modeInsert {
 			m.editor.handleKey(&m.register, '\n', keyNone)
 		}
-		return nil
+		return
 	}
 
 	if key == keyPageUp || key == keyCtrlB {
 		m.focusTranscript()
 		m.transcript.handleKey(m.lines, m.transcriptHeight, &m.register, 0, key)
-		return nil
+		return
 	}
 
 	switch m.editor.handleKey(&m.register, char, key) {
 	case editorFocusTranscript:
 		m.focusTranscript()
 	case editorSend:
-		return m.send()
+		m.send()
 	}
-	return nil
 }
 
 func (m *model) focusTranscript() {
@@ -300,35 +360,44 @@ func (m *model) atBottom() bool {
 	return m.transcript.scrollTop >= len(m.lines)-m.transcriptHeight
 }
 
-func (m *model) send() tea.Cmd {
+func (m *model) send() {
 	if len(m.editor.text) == 0 || m.busy {
-		return nil
+		return
 	}
 	prompt := string(m.editor.text)
 	// Sending goes back to the bottom, wherever the transcript was left.
 	m.transcript.scrollTop = len(m.lines)
 	if strings.TrimSpace(prompt) == indexCommand {
 		m.editor.reset()
-		return m.index()
+		m.index()
+		return
 	}
 	m.editor.reset()
 	m.store.addUser(prompt)
 	m.busy = true
-	agent := m.agent
-	return func() tea.Msg {
-		agent.RunTurn(prompt)
-		return turnFinishedMsg{}
-	}
+	go m.runTurn(prompt)
+}
+
+// runTurn runs a turn on its own goroutine and reports its end on turnDone.
+func (m *model) runTurn(prompt string) {
+	panicked := ""
+	defer func() {
+		if r := recover(); r != nil {
+			panicked = fmt.Sprintf("turn panicked: %v\n\n%s", r, debug.Stack())
+		}
+		m.turnDone <- panicked
+	}()
+	m.agent.RunTurn(prompt)
 }
 
 // index builds the repo map and starts following its progress.
-func (m *model) index() tea.Cmd {
+func (m *model) index() {
 	if m.repoMap == nil {
 		m.store.AddInfo(`index: there is no repo map · set "map": true in the config's search block`)
-		return nil
+		return
 	}
 	m.store.AddInfo(m.repoMap.Index())
-	return m.readIndicator()
+	m.readIndicator()
 }
 
 // margin is the empty space either side of the content. It shrinks to
@@ -429,50 +498,47 @@ func layoutInput(e *editor, width, maxRows int) (rows []screenLine, cursor posit
 	return all[e.scrollRow : e.scrollRow+visible], cursor
 }
 
-func (m *model) View() tea.View {
-	view := tea.View{AltScreen: true}
+// draw paints the whole screen and reports where the cursor goes, if it is
+// shown.
+func (m *model) draw(scr uv.Screen) (cursor uv.Position, shown bool) {
+	screen.Clear(scr)
 	if m.width < 10 || m.height < 4 {
-		return view
+		return cursor, false
 	}
 	left, top := m.margin(), m.topPadding()
-	rows := make([]string, top, m.height)
-	rows = append(rows, m.renderTranscript()...)
-	rows = append(rows, m.renderStatusBar())
-	inputTop := len(rows)
+	m.drawTranscript(scr, top)
+	inputTop := top + m.transcriptHeight
+	m.drawLine(scr, inputTop, m.statusBar())
+	inputTop++
 
 	if m.transcript.search.typing {
 		prompt := m.searchPrompt()
-		rows = append(rows, m.renderLine(prompt))
-		view.Content = strings.Join(rows, "\n")
-		view.Cursor = tea.NewCursor(left+cellsWidth(prompt.cells), inputTop)
-		return view
+		m.drawLine(scr, inputTop, prompt)
+		return uv.Pos(left+cellsWidth(prompt.cells), inputTop), true
 	}
 
-	rows = append(rows, m.renderInput()...)
-	view.Content = strings.Join(rows, "\n")
+	m.drawInput(scr, inputTop)
 	switch {
 	case m.focus == focusInput:
-		view.Cursor = tea.NewCursor(left+m.inputCursor.col, inputTop+m.inputCursor.line)
+		return uv.Pos(left+m.inputCursor.col, inputTop+m.inputCursor.line), true
 	case len(m.lines) > 0:
-		cursor := m.transcript.cursor
-		x := cellsWidth(m.lines[cursor.line].cells[:cursor.col])
-		view.Cursor = tea.NewCursor(left+x, top+cursor.line-m.transcript.scrollTop)
+		at := m.transcript.cursor
+		x := cellsWidth(m.lines[at.line].cells[:at.col])
+		return uv.Pos(left+x, top+at.line-m.transcript.scrollTop), true
 	}
-	return view
+	return cursor, false
 }
 
-func (m *model) renderTranscript() []string {
+func (m *model) drawTranscript(scr uv.Screen, top int) {
 	pattern := m.transcript.search.pattern
 	ignoreCase := ignoresCase(pattern)
 	selecting := m.focus == focusTranscript && m.transcript.visual != visualOff
 	selStart, selEnd := m.transcript.selection()
 
-	rows := make([]string, 0, m.transcriptHeight)
 	for y := range m.transcriptHeight {
 		i := m.transcript.scrollTop + y
 		if i >= len(m.lines) {
-			rows = append(rows, "")
-			continue
+			break
 		}
 		line := m.lines[i]
 		cells := slices.Clone(line.cells)
@@ -497,14 +563,13 @@ func (m *model) renderTranscript() []string {
 			}
 		}
 		line.cells = cells
-		rows = append(rows, m.renderLine(line))
+		m.drawLine(scr, top+y, line)
 	}
-	return rows
 }
 
-// renderStatusBar is a single quiet line: the mode in its accent colour, a
+// statusBar is a single quiet line: the mode in its accent colour, a
 // hairline, then the model and what it's doing.
-func (m *model) renderStatusBar() string {
+func (m *model) statusBar() screenLine {
 	mode, modeColor := "view", colorModeView
 	switch m.transcript.visual {
 	case visualChar:
@@ -574,7 +639,7 @@ func (m *model) renderStatusBar() string {
 		bar = append(bar, cell{'─', colorFaint, 0})
 	}
 	bar = append(bar, right...)
-	return m.renderLine(screenLine{cells: bar})
+	return screenLine{cells: bar}
 }
 
 func (m *model) searchPrompt() screenLine {
@@ -593,18 +658,16 @@ func (m *model) searchPrompt() screenLine {
 	return screenLine{cells: append(cells, typed...)}
 }
 
-func (m *model) renderInput() []string {
-	rows := make([]string, 0, len(m.inputRows))
-	for _, row := range m.inputRows {
+func (m *model) drawInput(scr uv.Screen, top int) {
+	for y, row := range m.inputRows {
 		if m.focus != focusInput {
 			row.cells = slices.Clone(row.cells)
 			for j := row.prefixLen; j < len(row.cells); j++ {
 				row.cells[j].fg = colorDim
 			}
 		}
-		rows = append(rows, m.renderLine(row))
+		m.drawLine(scr, top+y, row)
 	}
-	return rows
 }
 
 func cellsWidth(cells []cell) int {
@@ -615,63 +678,51 @@ func cellsWidth(cells []cell) int {
 	return width
 }
 
-// renderLine draws a line inside the margins. Margins are added here, never
-// stored in cells, so yanks and searches can't see them.
-func (m *model) renderLine(line screenLine) string {
-	var out strings.Builder
-	width := m.contentWidth()
-	out.WriteString(strings.Repeat(" ", m.margin()))
-	var run []rune
-	var runFg, runBg attr
-	flush := func() {
-		if len(run) > 0 {
-			out.WriteString(m.style(runFg, runBg).Render(string(run)))
-			run = run[:0]
-		}
-	}
-	x := 0
+// drawLine draws a line on row y, inside the margins. Margins are added here,
+// never stored in cells, so yanks and searches can't see them.
+func (m *model) drawLine(scr uv.Screen, y int, line screenLine) {
+	x := m.margin()
+	end := x + m.contentWidth()
 	for _, c := range line.cells {
 		charWidth := max(1, runeWidth(c.char))
-		if x+charWidth > width {
+		if x+charWidth > end {
 			break
 		}
 		bg := c.bg
 		if bg == 0 {
 			bg = line.fill
 		}
-		if c.fg != runFg || bg != runBg {
-			flush()
-			runFg, runBg = c.fg, bg
-		}
 		char := c.char
 		if runeWidth(char) <= 0 {
 			char = ' '
 		}
-		run = append(run, char)
+		scr.SetCell(x, y, &uv.Cell{Content: string(char), Width: charWidth, Style: cellStyle(c.fg, bg)})
 		x += charWidth
 	}
-	flush()
-	if line.fill != 0 && x < width {
-		out.WriteString(m.style(0, line.fill).Render(strings.Repeat(" ", width-x)))
+	if line.fill == 0 {
+		return
 	}
-	return out.String()
+	for ; x < end; x++ {
+		scr.SetCell(x, y, &uv.Cell{Content: " ", Width: 1, Style: cellStyle(0, line.fill)})
+	}
 }
 
-func (m *model) style(fg, bg attr) lipgloss.Style {
-	key := [2]attr{fg, bg}
-	if style, ok := m.styles[key]; ok {
-		return style
+func cellStyle(fg, bg attr) uv.Style {
+	var style uv.Style
+	if fg&attrBold != 0 {
+		style.Attrs |= uv.AttrBold
 	}
-	style := lipgloss.NewStyle().
-		Bold(fg&attrBold != 0).
-		Italic(fg&attrItalic != 0).
-		Underline(fg&attrUnderline != 0)
+	if fg&attrItalic != 0 {
+		style.Attrs |= uv.AttrItalic
+	}
+	if fg&attrUnderline != 0 {
+		style.Underline = uv.UnderlineSingle
+	}
 	if color := fg.color(); color != 0 {
-		style = style.Foreground(lipgloss.ANSIColor(color))
+		style.Fg = ansi.IndexedColor(color)
 	}
 	if color := bg.color(); color != 0 {
-		style = style.Background(lipgloss.ANSIColor(color))
+		style.Bg = ansi.IndexedColor(color)
 	}
-	m.styles[key] = style
 	return style
 }

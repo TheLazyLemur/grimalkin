@@ -1,12 +1,13 @@
 package tui
 
 import (
+	"bytes"
 	"fmt"
 	"slices"
 	"strings"
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 
 	"grimalkin/internal/core"
@@ -26,7 +27,7 @@ func (nopClipboard) Copy(string) {}
 
 func typeText(m *model, text string) {
 	for _, char := range text {
-		m.Update(tea.KeyPressMsg{Code: char, Text: string(char)})
+		m.handle(uv.KeyPressEvent{Code: char, Text: string(char)})
 	}
 }
 
@@ -35,34 +36,47 @@ func TestCtrlCCancelsARunningTurnAndQuitsOnceItHasFinished(t *testing.T) {
 	// ... a prompt sent to the agent
 	agent := &fakeAgent{}
 	m := newModel(agent, NewStore(), nopClipboard{}, "fake", nil)
-	m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
+	m.handle(uv.WindowSizeEvent{Width: 40, Height: 12})
 	typeText(m, "hi")
-	_, runTurn := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m.handle(uv.KeyPressEvent{Code: uv.KeyEnter})
 
 	// when
 	// ... Ctrl-C is pressed during the turn, the turn finishes, and Ctrl-C is pressed again
-	_, duringTurn := m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
-	m.Update(runTurn())
-	_, afterTurn := m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	m.handle(uv.KeyPressEvent{Code: 'c', Mod: uv.ModCtrl})
+	quitDuringTurn := m.quit
+	m.finishTurn(<-m.turnDone)
+	m.handle(uv.KeyPressEvent{Code: 'c', Mod: uv.ModCtrl})
 
 	// then
 	// ... the turn ran with the prompt, the first Ctrl-C cancelled it without quitting, and the second quit
 	if len(agent.prompts) != 1 || agent.prompts[0] != "hi" {
 		t.Errorf("prompts = %q", agent.prompts)
 	}
-	if agent.cancelled != 1 || duringTurn != nil {
-		t.Errorf("cancelled %d times, command during turn %v", agent.cancelled, duringTurn)
+	if agent.cancelled != 1 || quitDuringTurn {
+		t.Errorf("cancelled %d times, quit during turn %v", agent.cancelled, quitDuringTurn)
 	}
-	if afterTurn == nil {
-		t.Fatal("no command after the turn")
-	}
-	if _, quit := afterTurn().(tea.QuitMsg); !quit {
-		t.Errorf("after the turn Ctrl-C gave %T, want tea.QuitMsg", afterTurn())
+	if !m.quit {
+		t.Error("Ctrl-C after the turn did not quit")
 	}
 }
 
+// drawn is the screen as rows of text, and where the cursor was put.
+func drawn(m *model) (rows []string, cursor uv.Position) {
+	buf := uv.NewScreenBuffer(m.width, m.height)
+	cursor, _ = m.draw(buf)
+	return strings.Split(buf.String(), "\n"), cursor
+}
+
 func screenRows(m *model) []string {
-	return strings.Split(ansi.Strip(m.View().Content), "\n")
+	rows, _ := drawn(m)
+	return rows
+}
+
+// statusText is the status bar as it is drawn, margin included.
+func statusText(m *model) string {
+	buf := uv.NewScreenBuffer(m.width, 1)
+	m.drawLine(buf, 0, m.statusBar())
+	return buf.String()
 }
 
 func TestContentSitsInsideMarginsWithTheCursorOnIt(t *testing.T) {
@@ -71,13 +85,12 @@ func TestContentSitsInsideMarginsWithTheCursorOnIt(t *testing.T) {
 	store := NewStore()
 	m := newModel(&fakeAgent{}, store, nopClipboard{}, "fake", nil)
 	store.AddInfo("hello")
-	m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	m.handle(uv.WindowSizeEvent{Width: 80, Height: 20})
 	typeText(m, "hi")
 
 	// when
 	// ... the screen is drawn
-	view := m.View()
-	rows := screenRows(m)
+	rows, cursor := drawn(m)
 
 	// then
 	// ... a blank row tops the screen, every row fits and starts with the margin, and the cursor follows the input
@@ -90,8 +103,8 @@ func TestContentSitsInsideMarginsWithTheCursorOnIt(t *testing.T) {
 		}
 	}
 	last := rows[len(rows)-1]
-	if last != "  › hi" || view.Cursor.X != 6 || view.Cursor.Y != 19 {
-		t.Errorf("input %q, cursor %+v", last, view.Cursor.Position)
+	if last != "  › hi" || cursor.X != 6 || cursor.Y != 19 {
+		t.Errorf("input %q, cursor %+v", last, cursor)
 	}
 }
 
@@ -99,9 +112,9 @@ func TestNarrowTerminalsDropTheMarginsAndKeepTheTurnState(t *testing.T) {
 	// given
 	// ... a narrow terminal with a turn running
 	m := newModel(&fakeAgent{}, NewStore(), nopClipboard{}, "a-long-model-name", nil)
-	m.Update(tea.WindowSizeMsg{Width: 24, Height: 8})
+	m.handle(uv.WindowSizeEvent{Width: 24, Height: 8})
 	typeText(m, "hi")
-	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m.handle(uv.KeyPressEvent{Code: uv.KeyEnter})
 
 	// when
 	// ... the screen is drawn
@@ -141,7 +154,7 @@ func TestStatusKeepsModeAndActivityAheadOfLongNotesAndModelNames(t *testing.T) {
 				m.focus, m.editor.mode, m.transcript.visual = mode.focus, mode.editor, mode.visual
 				m.statusNote = "pattern not found: " + strings.Repeat("漢字", 30)
 				m.busy = busy
-				status := strings.TrimSpace(ansi.Strip(m.renderStatusBar()))
+				status := strings.TrimSpace(statusText(m))
 				if !strings.HasPrefix(status, mode.name+" ") || ansi.StringWidth(status) > m.contentWidth() {
 					t.Errorf("width %d, mode %s, busy %v: %q", width, mode.name, busy, status)
 				}
@@ -162,13 +175,13 @@ func TestStatusKeepsModeAndActivityAheadOfLongNotesAndModelNames(t *testing.T) {
 
 func TestResizeKeepsWrappedInputAndCursorInsideTheContent(t *testing.T) {
 	m := newModel(&fakeAgent{}, NewStore(), nopClipboard{}, "fake", nil)
-	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.handle(uv.WindowSizeEvent{Width: 80, Height: 24})
 	typeText(m, strings.Repeat("漢字 abc ", 12)+"\nnext")
 	for _, size := range []struct{ width, height int }{
 		{80, 24}, {60, 16}, {59, 15}, {30, 8}, {24, 8}, {10, 4}, {120, 40},
 	} {
-		m.Update(tea.WindowSizeMsg{Width: size.width, Height: size.height})
-		view, rows := m.View(), screenRows(m)
+		m.handle(uv.WindowSizeEvent{Width: size.width, Height: size.height})
+		rows, cursor := drawn(m)
 		if len(rows) != size.height {
 			t.Errorf("%+v: got %d rows", size, len(rows))
 		}
@@ -177,12 +190,11 @@ func TestResizeKeepsWrappedInputAndCursorInsideTheContent(t *testing.T) {
 				t.Errorf("%+v: overflowing row %q", size, row)
 			}
 		}
-		cursor := view.Cursor
 		if cursor.X < m.margin() || cursor.X >= size.width-m.margin() || cursor.Y < 0 || cursor.Y >= size.height {
-			t.Errorf("%+v: cursor outside content: %+v", size, cursor.Position)
+			t.Errorf("%+v: cursor outside content: %+v", size, cursor)
 		}
 		if cursor.X != ansi.StringWidth(rows[cursor.Y]) {
-			t.Errorf("%+v: cursor %+v not at the end of input %q", size, cursor.Position, rows[cursor.Y])
+			t.Errorf("%+v: cursor %+v not at the end of input %q", size, cursor, rows[cursor.Y])
 		}
 	}
 }
@@ -191,28 +203,28 @@ func TestTranscriptCursorSearchAndSelectionRespectMargins(t *testing.T) {
 	store := NewStore()
 	store.AddInfo("漢字 hello")
 	m := newModel(&fakeAgent{}, store, nopClipboard{}, "fake", nil)
-	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.handle(uv.WindowSizeEvent{Width: 80, Height: 24})
 	m.focusTranscript()
 	m.transcript.cursor = position{0, 3} // h, after two double-width characters and a space
 	m.layout()
-	view := m.View()
-	if view.Cursor.X != 7 || view.Cursor.Y != 1 {
-		t.Fatalf("transcript cursor %+v", view.Cursor.Position)
+	_, cursor := drawn(m)
+	if cursor.X != 7 || cursor.Y != 1 {
+		t.Fatalf("transcript cursor %+v", cursor)
 	}
 
-	m.Update(tea.KeyPressMsg{Code: 'V', Text: "V"})
-	m.Update(tea.KeyPressMsg{Code: 'y', Text: "y"})
+	m.handle(uv.KeyPressEvent{Code: 'V', Text: "V"})
+	m.handle(uv.KeyPressEvent{Code: 'y', Text: "y"})
 	if got := string(m.register); got != "漢字 hello" {
 		t.Errorf("yank contains presentation padding: %q", got)
 	}
 
-	m.Update(tea.KeyPressMsg{Code: '/', Text: "/"})
+	m.handle(uv.KeyPressEvent{Code: '/', Text: "/"})
 	typeText(m, "hello")
-	view = m.View()
-	if view.Cursor.X != 8 || view.Cursor.Y != 23 || screenRows(m)[23] != "  /hello" {
-		t.Errorf("search cursor %+v, rows %q", view.Cursor.Position, screenRows(m))
+	rows, cursor := drawn(m)
+	if cursor.X != 8 || cursor.Y != 23 || rows[23] != "  /hello" {
+		t.Errorf("search cursor %+v, rows %q", cursor, rows)
 	}
-	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m.handle(uv.KeyPressEvent{Code: uv.KeyEnter})
 	if m.transcript.cursor != (position{0, 3}) {
 		t.Errorf("search landed at %+v", m.transcript.cursor)
 	}
@@ -223,18 +235,18 @@ func TestTranscriptCursorSearchAndSelectionRespectMargins(t *testing.T) {
 
 func TestLongSearchKeepsItsTailAndCursorVisible(t *testing.T) {
 	m := newModel(&fakeAgent{}, NewStore(), nopClipboard{}, "fake", nil)
-	m.Update(tea.WindowSizeMsg{Width: 30, Height: 16})
+	m.handle(uv.WindowSizeEvent{Width: 30, Height: 16})
 	m.focusTranscript()
-	m.Update(tea.KeyPressMsg{Code: '?', Text: "?"})
+	m.handle(uv.KeyPressEvent{Code: '?', Text: "?"})
 	query := strings.Repeat("漢字", 20) + "needle"
 	typeText(m, query)
-	view := m.View()
-	row := screenRows(m)[15]
+	rows, cursor := drawn(m)
+	row := rows[15]
 	if !strings.HasPrefix(row, " ?") || !strings.HasSuffix(row, "needle") || ansi.StringWidth(row) >= 29 {
 		t.Errorf("search row %q", row)
 	}
-	if view.Cursor.X != ansi.StringWidth(row) || view.Cursor.Y != 15 {
-		t.Errorf("cursor %+v, row %q", view.Cursor.Position, row)
+	if cursor.X != ansi.StringWidth(row) || cursor.Y != 15 {
+		t.Errorf("cursor %+v, row %q", cursor, row)
 	}
 	if string(m.transcript.search.typed) != query {
 		t.Errorf("search scrolling changed the query")
@@ -243,7 +255,7 @@ func TestLongSearchKeepsItsTailAndCursorVisible(t *testing.T) {
 
 func pressKeys(m *model, keys string) {
 	for _, char := range keys {
-		m.Update(tea.KeyPressMsg{Code: char, Text: string(char)})
+		m.handle(uv.KeyPressEvent{Code: char, Text: string(char)})
 	}
 }
 
@@ -255,7 +267,7 @@ func foldModel(t *testing.T) *model {
 	store.Show(core.ToolStarted{ID: "2", Name: "shell", Summary: "seq 6"})
 	store.Show(core.ToolFinished{ID: "2", Output: "1\n2\n3\n4\n5\n6"})
 	m := newModel(&fakeAgent{}, store, nopClipboard{}, "fake", nil)
-	m.Update(tea.WindowSizeMsg{Width: 60, Height: 40})
+	m.handle(uv.WindowSizeEvent{Width: 60, Height: 40})
 	m.focusTranscript()
 	return m
 }
@@ -365,7 +377,7 @@ func TestCollapsingFromDeepInsideOutputLandsOnItsCommandInView(t *testing.T) {
 	store.Show(core.ReplyStarted{})
 	store.Show(core.ReplyText{Text: strings.Repeat("x\n", 60)})
 	m := newModel(&fakeAgent{}, store, nopClipboard{}, "fake", nil)
-	m.Update(tea.WindowSizeMsg{Width: 60, Height: 40})
+	m.handle(uv.WindowSizeEvent{Width: 60, Height: 40})
 	m.focusTranscript()
 	pressKeys(m, "zR")
 	m.transcript.jumpTo(m.lines, m.transcriptHeight, position{151, 0})
@@ -397,7 +409,7 @@ func TestFoldingAllKeepsACursorOnADividerOnThatDivider(t *testing.T) {
 	store.Show(core.ToolFinished{ID: "1", Output: strings.Join(out, "\n")})
 	store.addUser("two")
 	m := newModel(&fakeAgent{}, store, nopClipboard{}, "fake", nil)
-	m.Update(tea.WindowSizeMsg{Width: 60, Height: 40})
+	m.handle(uv.WindowSizeEvent{Width: 60, Height: 40})
 	m.focusTranscript()
 	divider := slices.IndexFunc(m.lines, func(l screenLine) bool {
 		return l.decoration && strings.Contains(lineText(l), "──")
@@ -447,7 +459,7 @@ func TestZeroWidthRunesInANoteCannotPushTheStateOff(t *testing.T) {
 
 	// when
 	// ... the status bar is drawn
-	status := ansi.Strip(m.renderStatusBar())
+	status := statusText(m)
 
 	// then
 	// ... the note is cut and the full state still shows
@@ -476,18 +488,21 @@ func TestTheStatusBarShowsALiveIndicatorAndStopsPollingWhenItSettles(t *testing.
 	// ... an indicator reporting a build in progress
 	indicator := &fakeRepoMap{text: "map 42%", live: true}
 	m := newModel(&fakeAgent{}, NewStore(), nopClipboard{}, "fake", indicator)
-	m.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
+	m.handle(uv.WindowSizeEvent{Width: 80, Height: 10})
 
 	// when
 	// ... the UI starts, a poll finds the build further on, and the next finds it done
-	started := m.Init()
-	atStart := ansi.Strip(m.renderStatusBar())
+	m.readIndicator()
+	started := m.indicatorDue != nil
+	atStart := statusText(m)
 	indicator.text = "map 87%"
-	_, whileLive := m.Update(indicatorTickMsg{})
-	later := ansi.Strip(m.renderStatusBar())
+	m.readIndicator()
+	whileLive := m.indicatorDue != nil
+	later := statusText(m)
 	indicator.text, indicator.live = "map ✓", false
-	_, settled := m.Update(indicatorTickMsg{})
-	atEnd := ansi.Strip(m.renderStatusBar())
+	m.readIndicator()
+	settled := m.indicatorDue != nil
+	atEnd := statusText(m)
 
 	// then
 	// ... the progress shows beside the model name and follows each poll
@@ -495,8 +510,8 @@ func TestTheStatusBarShowsALiveIndicatorAndStopsPollingWhenItSettles(t *testing.
 		t.Errorf("status %q, then %q, then %q", atStart, later, atEnd)
 	}
 	// ... and another poll is scheduled only while it is live
-	if started == nil || whileLive == nil || settled != nil {
-		t.Errorf("commands: at start %v, while live %v, once settled %v", started != nil, whileLive != nil, settled != nil)
+	if !started || !whileLive || settled {
+		t.Errorf("poll due: at start %v, while live %v, once settled %v", started, whileLive, settled)
 	}
 }
 
@@ -507,13 +522,13 @@ func TestIndexBuildsTheRepoMapWithoutATurn(t *testing.T) {
 	store := NewStore()
 	repoMap := &fakeRepoMap{}
 	m := newModel(agent, store, nopClipboard{}, "fake", repoMap)
-	m.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
-	m.Init()
+	m.handle(uv.WindowSizeEvent{Width: 80, Height: 10})
+	m.readIndicator()
 
 	// when
 	// ... the user sends /index
 	typeText(m, "/index")
-	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m.handle(uv.KeyPressEvent{Code: uv.KeyEnter})
 
 	// then
 	// ... the map is built and its line shown, with nothing sent to the model
@@ -522,8 +537,8 @@ func TestIndexBuildsTheRepoMapWithoutATurn(t *testing.T) {
 		t.Errorf("indexed %d times, prompts %q, busy %v, entries %+v", repoMap.indexed, agent.prompts, m.busy, got)
 	}
 	// ... and the status bar follows the build from then on
-	if status := ansi.Strip(m.renderStatusBar()); cmd == nil || !strings.Contains(status, "map …") {
-		t.Errorf("polling %v, status %q", cmd != nil, status)
+	if status := statusText(m); m.indicatorDue == nil || !strings.Contains(status, "map …") {
+		t.Errorf("polling %v, status %q", m.indicatorDue != nil, status)
 	}
 }
 
@@ -533,12 +548,12 @@ func TestIndexWithoutARepoMapSaysHowToTurnItOn(t *testing.T) {
 	agent := &fakeAgent{}
 	store := NewStore()
 	m := newModel(agent, store, nopClipboard{}, "fake", nil)
-	m.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
+	m.handle(uv.WindowSizeEvent{Width: 80, Height: 10})
 
 	// when
 	// ... the user sends /index
 	typeText(m, "/index")
-	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m.handle(uv.KeyPressEvent{Code: uv.KeyEnter})
 
 	// then
 	// ... an info line names the setting, and nothing is sent to the model
@@ -553,11 +568,11 @@ func TestTheIndicatorIsDroppedBeforeTheModeOrState(t *testing.T) {
 	// ... a narrow terminal and a long indicator
 	m := newModel(&fakeAgent{}, NewStore(), nopClipboard{}, "fake", &fakeRepoMap{text: "map 99% and much more", live: true})
 	m.width, m.height = 24, 10
-	m.Init()
+	m.readIndicator()
 
 	// when
 	// ... the status bar is drawn
-	status := strings.TrimSpace(ansi.Strip(m.renderStatusBar()))
+	status := strings.TrimSpace(statusText(m))
 
 	// then
 	// ... the mode and state keep their place and the indicator gives way
@@ -571,7 +586,7 @@ func scrolledUpModel() *model {
 	store.Show(core.ReplyStarted{})
 	store.Show(core.ReplyText{Text: strings.Repeat("x\n", 60)})
 	m := newModel(&fakeAgent{}, store, nopClipboard{}, "fake", nil)
-	m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
+	m.handle(uv.WindowSizeEvent{Width: 40, Height: 12})
 	m.focusTranscript()
 	pressKeys(m, "gg")
 	return m
@@ -586,7 +601,7 @@ func TestTypingWhileScrolledUpLeavesTheTranscriptWhereItWas(t *testing.T) {
 	// ... a message is typed and more output arrives
 	pressKeys(m, "ihello")
 	m.store.Show(core.ReplyText{Text: "more\n"})
-	m.Update(storeChangedMsg{})
+	m.layout()
 
 	// then
 	// ... the input has the text and the transcript still shows its top
@@ -603,9 +618,9 @@ func TestSendingFromAScrolledUpTranscriptGoesToTheBottomAndFollows(t *testing.T)
 
 	// when
 	// ... it is sent and the reply arrives
-	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m.handle(uv.KeyPressEvent{Code: uv.KeyEnter})
 	m.store.Show(core.ReplyText{Text: "more\n"})
-	m.Update(storeChangedMsg{})
+	m.layout()
 
 	// then
 	// ... the transcript shows its last line
@@ -622,12 +637,35 @@ func TestLeavingTheInputForAScrolledUpTranscriptKeepsTheCursor(t *testing.T) {
 
 	// when
 	// ... Esc and k go back to the transcript
-	m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	m.handle(uv.KeyPressEvent{Code: uv.KeyEscape})
 	pressKeys(m, "k")
 
 	// then
 	// ... the cursor is where it was left, not on the last line
 	if m.focus != focusTranscript || m.transcript.cursor.line != 0 || m.transcript.scrollTop != 0 {
 		t.Errorf("focus %v, cursor %+v, scrollTop %d", m.focus, m.transcript.cursor, m.transcript.scrollTop)
+	}
+}
+
+func TestMovingOnlyTheCursorReachesTheTerminalInTheSameFrame(t *testing.T) {
+	// given
+	// ... a terminal screen already showing a frame with the cursor on it
+	var out bytes.Buffer
+	scr := uv.NewTerminalScreen(&out, nil)
+	scr.EnterAltScreen()
+	scr.Resize(40, 5)
+	if err := present(scr, uv.Pos(1, 1), true); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+
+	// when
+	// ... the next frame changes nothing but where the cursor is
+	err := present(scr, uv.Pos(20, 4), true)
+
+	// then
+	// ... the move to the new place is written now, not held back until the frame after
+	if want := ansi.CursorPosition(21, 5); err != nil || !strings.Contains(out.String(), want) {
+		t.Errorf("err %v, wrote %q, want it to contain %q", err, out.String(), want)
 	}
 }

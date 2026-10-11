@@ -4,7 +4,7 @@ A terminal coding agent with vim-style navigation, written in Go.
 
 grimalkin speaks the Anthropic Messages API through the official Go SDK, so it
 works with Claude or any compatible endpoint (e.g. Ollama). It renders with
-Bubble Tea and Lip Gloss and has two tools, a shell and
+Ultraviolet and has two tools, a shell and
 [search](#search), plus [skills](#skills).
 
 > **Warning:** the shell is **unsandboxed**. Every command the model chooses
