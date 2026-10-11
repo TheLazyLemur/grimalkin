@@ -262,10 +262,10 @@ func pressKeys(m *model, keys string) {
 func foldModel(t *testing.T) *model {
 	t.Helper()
 	store := NewStore()
-	store.Show(core.ToolStarted{ID: "1", Name: "shell", Summary: "seq 10"})
-	store.Show(core.ToolFinished{ID: "1", Output: "1\n2\n3\n4\n5\n6\n7\n8\n9\n10"})
-	store.Show(core.ToolStarted{ID: "2", Name: "shell", Summary: "seq 6"})
-	store.Show(core.ToolFinished{ID: "2", Output: "1\n2\n3\n4\n5\n6"})
+	store.Show(0, core.ToolStarted{ID: "1", Name: "shell", Summary: "seq 10"})
+	store.Show(0, core.ToolFinished{ID: "1", Output: "1\n2\n3\n4\n5\n6\n7\n8\n9\n10"})
+	store.Show(0, core.ToolStarted{ID: "2", Name: "shell", Summary: "seq 6"})
+	store.Show(0, core.ToolFinished{ID: "2", Output: "1\n2\n3\n4\n5\n6"})
 	m := newModel(&fakeAgent{}, store, nopClipboard{}, "fake", nil)
 	m.handle(uv.WindowSizeEvent{Width: 60, Height: 40})
 	m.focusTranscript()
@@ -372,10 +372,10 @@ func TestCollapsingFromDeepInsideOutputLandsOnItsCommandInView(t *testing.T) {
 	for i := range 200 {
 		out = append(out, fmt.Sprint(i))
 	}
-	store.Show(core.ToolStarted{ID: "1", Name: "shell", Summary: "seq 200"})
-	store.Show(core.ToolFinished{ID: "1", Output: strings.Join(out, "\n")})
-	store.Show(core.ReplyStarted{})
-	store.Show(core.ReplyText{Text: strings.Repeat("x\n", 60)})
+	store.Show(0, core.ToolStarted{ID: "1", Name: "shell", Summary: "seq 200"})
+	store.Show(0, core.ToolFinished{ID: "1", Output: strings.Join(out, "\n")})
+	store.Show(0, core.ReplyStarted{})
+	store.Show(0, core.ReplyText{Text: strings.Repeat("x\n", 60)})
 	m := newModel(&fakeAgent{}, store, nopClipboard{}, "fake", nil)
 	m.handle(uv.WindowSizeEvent{Width: 60, Height: 40})
 	m.focusTranscript()
@@ -405,8 +405,8 @@ func TestFoldingAllKeepsACursorOnADividerOnThatDivider(t *testing.T) {
 		out = append(out, fmt.Sprint(i))
 	}
 	store.addUser("one")
-	store.Show(core.ToolStarted{ID: "1", Name: "shell", Summary: "seq 100"})
-	store.Show(core.ToolFinished{ID: "1", Output: strings.Join(out, "\n")})
+	store.Show(0, core.ToolStarted{ID: "1", Name: "shell", Summary: "seq 100"})
+	store.Show(0, core.ToolFinished{ID: "1", Output: strings.Join(out, "\n")})
 	store.addUser("two")
 	m := newModel(&fakeAgent{}, store, nopClipboard{}, "fake", nil)
 	m.handle(uv.WindowSizeEvent{Width: 60, Height: 40})
@@ -583,8 +583,8 @@ func TestTheIndicatorIsDroppedBeforeTheModeOrState(t *testing.T) {
 
 func scrolledUpModel() *model {
 	store := NewStore()
-	store.Show(core.ReplyStarted{})
-	store.Show(core.ReplyText{Text: strings.Repeat("x\n", 60)})
+	store.Show(0, core.ReplyStarted{})
+	store.Show(0, core.ReplyText{Text: strings.Repeat("x\n", 60)})
 	m := newModel(&fakeAgent{}, store, nopClipboard{}, "fake", nil)
 	m.handle(uv.WindowSizeEvent{Width: 40, Height: 12})
 	m.focusTranscript()
@@ -600,7 +600,7 @@ func TestTypingWhileScrolledUpLeavesTheTranscriptWhereItWas(t *testing.T) {
 	// when
 	// ... a message is typed and more output arrives
 	pressKeys(m, "ihello")
-	m.store.Show(core.ReplyText{Text: "more\n"})
+	m.store.Show(0, core.ReplyText{Text: "more\n"})
 	m.layout()
 
 	// then
@@ -619,7 +619,7 @@ func TestSendingFromAScrolledUpTranscriptGoesToTheBottomAndFollows(t *testing.T)
 	// when
 	// ... it is sent and the reply arrives
 	m.handle(uv.KeyPressEvent{Code: uv.KeyEnter})
-	m.store.Show(core.ReplyText{Text: "more\n"})
+	m.store.Show(0, core.ReplyText{Text: "more\n"})
 	m.layout()
 
 	// then
@@ -647,6 +647,59 @@ func TestLeavingTheInputForAScrolledUpTranscriptKeepsTheCursor(t *testing.T) {
 	}
 }
 
+func TestAResultArrivingAboveASelectionLeavesItOnTheSameLines(t *testing.T) {
+	// given
+	// ... two running commands, the second selected linewise in the transcript
+	store := NewStore()
+	store.Show(0, core.ToolStarted{ID: "1", Name: "shell", Summary: "make"})
+	store.Show(0, core.ToolStarted{ID: "2", Name: "shell", Summary: "ls"})
+	m := newModel(&fakeAgent{}, store, nopClipboard{}, "fake", nil)
+	m.handle(uv.WindowSizeEvent{Width: 60, Height: 40})
+	m.focusTranscript()
+	pressKeys(m, "V")
+
+	// when
+	// ... the first command's output arrives above it, and the selection is yanked
+	store.Show(0, core.ToolFinished{ID: "1", Output: "a\nb\nc"})
+	m.layout()
+	pressKeys(m, "y")
+
+	// then
+	// ... the second command is what is yanked
+	if got := string(m.register); got != "ls" {
+		t.Errorf("yanked %q", got)
+	}
+}
+
+func TestAResultArrivingAboveAScrolledUpViewLeavesItShowingTheSameLines(t *testing.T) {
+	// given
+	// ... a running command, then enough lines to scroll it off the top, and a message being typed
+	store := NewStore()
+	store.Show(0, core.ToolStarted{ID: "1", Name: "shell", Summary: "make"})
+	for i := range 30 {
+		store.AddInfo(fmt.Sprint(i))
+	}
+	m := newModel(&fakeAgent{}, store, nopClipboard{}, "fake", nil)
+	m.handle(uv.WindowSizeEvent{Width: 40, Height: 12})
+	m.focusTranscript()
+	pressKeys(m, "gg")
+	m.handle(uv.KeyPressEvent{Code: 'd', Mod: uv.ModCtrl})
+	pressKeys(m, "i")
+	before := screenRows(m)[:m.transcriptHeight]
+
+	// when
+	// ... the command's output arrives
+	store.Show(0, core.ToolFinished{ID: "1", Output: "a\nb\nc"})
+	m.layout()
+
+	// then
+	// ... the transcript shows the lines it showed before, none of them the command's
+	after := screenRows(m)[:m.transcriptHeight]
+	if !slices.Equal(after, before) || slices.Contains(before, " $ make") {
+		t.Errorf("rows %q\nwere %q", after, before)
+	}
+}
+
 func TestMovingOnlyTheCursorReachesTheTerminalInTheSameFrame(t *testing.T) {
 	// given
 	// ... a terminal screen already showing a frame with the cursor on it
@@ -667,5 +720,56 @@ func TestMovingOnlyTheCursorReachesTheTerminalInTheSameFrame(t *testing.T) {
 	// ... the move to the new place is written now, not held back until the frame after
 	if want := ansi.CursorPosition(21, 5); err != nil || !strings.Contains(out.String(), want) {
 		t.Errorf("err %v, wrote %q, want it to contain %q", err, out.String(), want)
+	}
+}
+
+func TestTurnEventsFromAnotherAgentStayOutOfTheTranscript(t *testing.T) {
+	// given
+	// ... the parent's reply on screen
+	store := NewStore()
+	m := newModel(&fakeAgent{}, store, nopClipboard{}, "fake", nil)
+	m.handle(uv.WindowSizeEvent{Width: 40, Height: 12})
+	store.Show(0, core.ReplyStarted{})
+	store.Show(0, core.ReplyText{Text: "from the parent"})
+
+	// when
+	// ... agent 1 replies, runs a tool, loads a skill and has its turn discarded
+	store.Show(1, core.ReplyStarted{})
+	store.Show(1, core.ReplyText{Text: "child reply"})
+	store.Show(1, core.ToolStarted{ID: "1", Name: "shell", Summary: "child command"})
+	store.Show(1, core.ToolFinished{ID: "1", Output: "child output"})
+	store.Show(1, core.SkillLoaded{Name: "childskill", Content: "child skill content"})
+	store.Show(1, core.TurnDiscarded{Reason: "child failure"})
+	m.layout()
+
+	// then
+	// ... the screen shows the parent's reply and nothing of agent 1's
+	screen := strings.Join(screenRows(m), "\n")
+	if !strings.Contains(screen, "from the parent") || strings.Contains(screen, "child") {
+		t.Errorf("screen:\n%s", screen)
+	}
+}
+
+func TestAChildsLineGrowingAboveTheCursorLeavesItOnTheSameLine(t *testing.T) {
+	// given
+	// ... a narrow screen, a waiting child's line, and the cursor on a line with wide runes below it
+	store := NewStore()
+	store.Show(0, core.ChildWaiting{Child: 1, Model: "sonnet"})
+	store.AddInfo("漢字 below")
+	m := newModel(&fakeAgent{}, store, nopClipboard{}, "fake", nil)
+	m.handle(uv.WindowSizeEvent{Width: 30, Height: 12})
+	m.focusTranscript()
+
+	// when
+	// ... the child gets a slot, so its line gains a count and wraps, and the cursor's line is yanked
+	store.Show(0, core.ChildStarted{Child: 1, Model: "sonnet"})
+	m.layout()
+	pressKeys(m, "Vy")
+
+	// then
+	// ... the status line takes two rows and the line under the cursor is the one yanked
+	rows := screenRows(m)[:2]
+	if want := []string{" agent 1 · sonnet · 0 tools ·", " running"}; !slices.Equal(rows, want) || string(m.register) != "漢字 below" {
+		t.Errorf("rows %q, yanked %q", rows, m.register)
 	}
 }

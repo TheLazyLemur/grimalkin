@@ -2,7 +2,7 @@
 id: 7
 title: Transcript events say which agent they came from
 slice: 1
-status: in-progress
+status: done
 depends_on: []
 ---
 
@@ -13,7 +13,7 @@ finished, failed, cancelled). Until buffers exist (#2), the TUI shows only
 agent 0's turn events.
 
 **Done when.**
-- [ ] Every event the core emits for the parent's turn reports agent 0, checked through `RunTurn`.
-- [ ] The lifecycle event types exist, carrying the fields the subagents spec names.
-- [ ] A TUI test shows that a turn event from an agent other than 0 does not appear in the transcript.
-- [ ] Existing core and TUI tests pass.
+- [x] Every event the core emits for the parent's turn reports agent 0, checked through `RunTurn`.
+- [x] The lifecycle event types exist, carrying the fields the subagents spec names.
+- [x] A TUI test shows that a turn event from an agent other than 0 does not appear in the transcript.
+- [x] Existing core and TUI tests pass.

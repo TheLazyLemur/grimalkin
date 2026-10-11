@@ -194,30 +194,42 @@ func TestARenderErrorGoesBackToTheModel(t *testing.T) {
 
 func TestLoadingTheSameContentAgainGivesANoteInstead(t *testing.T) {
 	// given
-	// ... a model that loads a skill twice in one response, then again with other arguments
+	// ... a model that calls a tool and loads a skill twice in one response, then again with other arguments
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{skillCall("toolu_1", "review", "x"), skillCall("toolu_2", "review", "x")}, Content: "A1"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_0", "list", `{}`), skillCall("toolu_1", "review", "x"), skillCall("toolu_2", "review", "x")}, Content: "A1"}},
 		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{skillCall("toolu_3", "review", "x"), skillCall("toolu_4", "review", "y")}, Content: "A2"}},
 		{resp: ModelResponse{StopReason: StopEndTurn, Content: "A3"}},
 	}}
-	a := newAgent(model, &mockTranscript{})
-	a.Skills = skillLibrary()
+	skills := skillLibrary()
+	var renderedBeforeTool []string
+	list := &mockTool{name: "list", run: func(context.Context) (string, error) {
+		renderedBeforeTool = slices.Clone(skills.renders)
+		return "a.txt", nil
+	}}
+	a := newAgent(model, &mockTranscript{}, list)
+	a.Skills = skills
 
 	// when
 	// ... a turn runs
 	a.RunTurn("review")
 
 	// then
-	// ... only the first copy and the changed one are sent in full
+	// ... the skills ran before the tool, and only the first copy and the changed one are sent in full
+	if !slices.Equal(renderedBeforeTool, []string{"review|x", "review|x"}) {
+		t.Errorf("rendered before the tool ran: %v", renderedBeforeTool)
+	}
 	results := append(model.requests[1][len(model.requests[1])-1].ToolResults, model.requests[2][len(model.requests[2])-1].ToolResults...)
+	if results[0] != (ToolResult{ToolUseID: "toolu_0", Content: "a.txt"}) {
+		t.Errorf("tool result = %+v", results[0])
+	}
 	full := `<skill_content name="review">`
 	for i, wantFull := range []bool{true, false, false, true} {
-		if got := strings.HasPrefix(results[i].Content, full); got != wantFull {
-			t.Errorf("result %d = %q, want full: %v", i+1, results[i].Content, wantFull)
+		if got := strings.HasPrefix(results[i+1].Content, full); got != wantFull {
+			t.Errorf("skill result %d = %q, want full: %v", i+1, results[i+1].Content, wantFull)
 		}
 	}
-	if !strings.Contains(results[1].Content, "already loaded") {
-		t.Errorf("note = %q", results[1].Content)
+	if !strings.Contains(results[2].Content, "already loaded") {
+		t.Errorf("note = %q", results[2].Content)
 	}
 }
 
@@ -308,7 +320,7 @@ func TestAFailedSlashCommandDiscardsTheTurnWithoutCallingTheModel(t *testing.T) 
 
 	// then
 	// ... the turn is discarded with the reason and the model is never called
-	if last := transcript.last(); last != (TurnDiscarded{"skill review: exit code 2"}) {
+	if last := transcript.last(); last != (TurnDiscarded{Reason: "skill review: exit code 2"}) {
 		t.Errorf("last event = %#v", last)
 	}
 	if len(model.requests) != 0 || len(a.messages) != 0 {

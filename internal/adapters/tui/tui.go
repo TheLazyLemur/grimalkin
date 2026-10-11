@@ -265,17 +265,7 @@ func (m *model) refold(change func()) {
 		return
 	}
 	cursor := m.transcript.cursor.line
-	anchorLine := cursor
-	for anchorLine < len(m.lines) && m.lines[anchorLine].owner == nil {
-		anchorLine++
-	}
-	if anchorLine == len(m.lines) {
-		for anchorLine = cursor; anchorLine > 0 && m.lines[anchorLine].owner == nil; anchorLine-- {
-		}
-	}
-	anchor := m.lines[anchorLine].owner
-	oldStart, _ := ownedRange(m.lines, anchor)
-	delta := cursor - oldStart
+	anchor, delta := lineAnchor(m.lines, cursor)
 	inside := m.lines[cursor].owner == anchor && anchor != nil
 
 	change()
@@ -305,6 +295,37 @@ func (m *model) refold(change func()) {
 	}
 	target = clamp(target, 0, len(m.lines)-1)
 	m.transcript.jumpTo(m.lines, m.transcriptHeight, position{target, 0})
+}
+
+// lineAnchor names a line by an entry and how far the line is from that
+// entry's first: the entry it belongs to, or for a line that belongs to none
+// (a divider), the next entry.
+func lineAnchor(lines []screenLine, line int) (anchor *entry, delta int) {
+	anchorLine := line
+	for anchorLine < len(lines) && lines[anchorLine].owner == nil {
+		anchorLine++
+	}
+	if anchorLine == len(lines) {
+		for anchorLine = line; anchorLine > 0 && lines[anchorLine].owner == nil; anchorLine-- {
+		}
+	}
+	anchor = lines[anchorLine].owner
+	start, _ := ownedRange(lines, anchor)
+	return anchor, line - start
+}
+
+// movedLine is where a line of old went in lines: as far into the same entry
+// as it was. A line old doesn't have stays put.
+func movedLine(old, lines []screenLine, line int) int {
+	if line < 0 || line >= len(old) {
+		return line
+	}
+	anchor, delta := lineAnchor(old, line)
+	start, _ := ownedRange(lines, anchor)
+	if start < 0 {
+		return line
+	}
+	return start + delta
 }
 
 // ownedRange is the first and last line rendered from e, or -1, -1.
@@ -431,7 +452,13 @@ func (m *model) layout() {
 		m.inputRows = m.inputRows[:1]
 	}
 	m.transcriptHeight = max(1, m.height-1-len(m.inputRows)-m.topPadding())
+	old := m.lines
 	m.lines = m.store.render(m.contentWidth())
+	// A tool's result goes in under its command, which can be above the
+	// cursor: keep the cursor, the selection and the view on what they were on.
+	m.transcript.cursor.line = movedLine(old, m.lines, m.transcript.cursor.line)
+	m.transcript.anchor.line = movedLine(old, m.lines, m.transcript.anchor.line)
+	m.transcript.scrollTop = movedLine(old, m.lines, m.transcript.scrollTop)
 	if follow {
 		m.transcript.scrollTop = max(0, len(m.lines)-m.transcriptHeight)
 	} else {

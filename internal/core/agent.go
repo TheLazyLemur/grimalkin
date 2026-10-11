@@ -2,7 +2,9 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"sync"
 )
 
@@ -15,11 +17,27 @@ type Agent struct {
 	Tools      []Tool
 	Skills     Skills // optional
 
+	// SubagentTools is the tool list of the children this agent starts.
+	// The agent tool is offered only when it is non-nil.
+	SubagentTools []Tool
+	// ModelName is what Model is called in a child's status line. Required
+	// with SubagentTools.
+	ModelName string
+
+	number   int    // 0 for the parent
+	parent   *Agent // nil for the parent
 	messages []Message
 
-	mu     sync.Mutex
-	cancel context.CancelFunc
+	mu        sync.Mutex
+	cancel    context.CancelFunc
+	children  []*Agent   // child N is children[N-1]
+	slots     childSlots // the parent's: which of its children may run
+	running   bool       // a child's: claimed by a call until its turn ends
+	toolCalls int        // a child's: tool calls started in its running turn
 }
+
+// errCancelled is the discard reason of a turn whose context was cancelled.
+var errCancelled = errors.New("cancelled")
 
 // SystemPrompt is the system prompt, with a catalog of the skills the model
 // may load.
@@ -59,70 +77,90 @@ func (a *Agent) RunTurn(prompt string) {
 		cancel()
 	}()
 
-	checkpoint := len(a.messages)
 	text := prompt
 	if name, arguments, ok := a.userSkill(prompt); ok {
 		content, err := a.loadSkill(ctx, name, arguments, nil)
 		if err != nil {
 			reason := fmt.Sprintf("skill %s: %v", name, err)
 			if ctx.Err() != nil {
-				reason = "cancelled"
+				reason = errCancelled.Error()
 			}
-			a.discardTurn(checkpoint, reason)
+			a.show(TurnDiscarded{reason})
 			return
 		}
-		a.Transcript.Show(SkillLoaded{Name: name, Content: content})
+		a.show(SkillLoaded{Name: name, Content: content})
 		text = content
 	}
+	a.turn(ctx, text)
+}
+
+// turn runs one turn that starts with text as the user's message, and
+// returns the text of the response that ended it. A turn that fails is
+// discarded from the history and returns the reason, errCancelled when ctx
+// was cancelled.
+func (a *Agent) turn(ctx context.Context, text string) (string, error) {
+	checkpoint := len(a.messages)
 	a.messages = append(a.messages, Message{Role: RoleUser, Text: text})
 
 	specs := a.toolSpecs()
 	for range maxModelCalls {
-		a.Transcript.Show(ReplyStarted{})
+		a.show(ReplyStarted{})
 		req := ModelRequest{System: a.System, Tools: specs, Messages: a.messages}
-		resp, err := a.Model.Stream(ctx, req, func(text string) { a.Transcript.Show(ReplyText{text}) })
+		// Content is opaque, so the streamed text is the only record of
+		// what a response said.
+		var reply strings.Builder
+		resp, err := a.Model.Stream(ctx, req, func(text string) {
+			reply.WriteString(text)
+			a.show(ReplyText{text})
+		})
 		if err != nil {
-			reason := err.Error()
 			if ctx.Err() != nil {
-				reason = "cancelled"
+				err = errCancelled
 			}
-			a.discardTurn(checkpoint, reason)
-			return
+			return "", a.discardTurn(checkpoint, err)
 		}
 		a.messages = append(a.messages, Message{Role: RoleAssistant, Content: resp.Content})
 
 		switch resp.StopReason {
 		case StopEndTurn:
-			return
+			return reply.String(), nil
 		case StopToolUse:
 			if len(resp.ToolCalls) == 0 {
 				panic("stop_reason tool_use without tool calls")
 			}
-			results := make([]ToolResult, len(resp.ToolCalls))
-			for i, call := range resp.ToolCalls {
-				results[i] = a.runTool(ctx, call, results[:i])
-				if ctx.Err() != nil {
-					a.discardTurn(checkpoint, "cancelled")
-					return
-				}
+			results := a.runTools(ctx, resp.ToolCalls)
+			if ctx.Err() != nil {
+				return "", a.discardTurn(checkpoint, errCancelled)
 			}
 			a.messages = append(a.messages, Message{Role: RoleUser, ToolResults: results})
 		case StopOther:
-			a.discardTurn(checkpoint, "stopped: "+resp.StopDetail)
-			return
+			return "", a.discardTurn(checkpoint, errors.New("stopped: "+resp.StopDetail))
 		default:
 			panic(fmt.Sprintf("unknown stop reason %d", resp.StopReason))
 		}
 	}
-	a.discardTurn(checkpoint, fmt.Sprintf("gave up after %d model calls", maxModelCalls))
+	return "", a.discardTurn(checkpoint, fmt.Errorf("gave up after %d model calls", maxModelCalls))
 }
 
 func (a *Agent) checkWiring() {
 	if a.Model == nil || a.Transcript == nil {
 		panic("agent ports not wired")
 	}
+	a.checkToolNames(a.Tools)
+	if a.SubagentTools != nil {
+		if a.ModelName == "" {
+			panic("subagent tools wired without a model name")
+		}
+		a.checkToolNames(a.SubagentTools)
+	}
+}
+
+// checkToolNames panics when two of tools share a name, or one has the name
+// of a tool the core adds. No list may hold the agent tool: the parent's has
+// the core's, and a child's has none.
+func (a *Agent) checkToolNames(tools []Tool) {
 	names := map[string]bool{}
-	for _, tool := range a.Tools {
+	for _, tool := range tools {
 		name := tool.Spec().Name
 		if names[name] {
 			panic(fmt.Sprintf("two tools named %q", name))
@@ -132,9 +170,19 @@ func (a *Agent) checkWiring() {
 	if a.Skills != nil && names[SkillToolName] {
 		panic(fmt.Sprintf("tool %q clashes with the skill tool", SkillToolName))
 	}
+	if a.SubagentTools != nil && names[AgentToolName] {
+		panic(fmt.Sprintf("tool %q clashes with the agent tool", AgentToolName))
+	}
 }
 
-func (a *Agent) discardTurn(checkpoint int, reason string) {
-	a.Transcript.Show(TurnDiscarded{reason})
+// show reports an event of this agent's to the transcript.
+func (a *Agent) show(event Event) {
+	a.Transcript.Show(a.number, event)
+}
+
+// discardTurn drops the turn's messages and returns reason.
+func (a *Agent) discardTurn(checkpoint int, reason error) error {
+	a.show(TurnDiscarded{reason.Error()})
 	a.messages = a.messages[:checkpoint]
+	return reason
 }

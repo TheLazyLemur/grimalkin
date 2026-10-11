@@ -2,7 +2,7 @@
 id: 6
 title: A response's tool calls run at the same time
 slice: 1
-status: todo
+status: done
 depends_on: [5]
 ---
 
@@ -12,6 +12,6 @@ Skill tool calls run first and one at a time, so a skill loaded twice in one
 response still gets the "already loaded" note.
 
 **Done when.**
-- [ ] A core test with two tools that each block until the other has started finishes, and both results go back in call order.
-- [ ] The existing test for a skill loaded twice in one response still passes, with another tool call in the same response.
-- [ ] Cancelling during concurrent calls stops them all and discards the turn, checked through `RunTurn`.
+- [x] A core test with two tools that each block until the other has started finishes, and both results go back in call order.
+- [x] The existing test for a skill loaded twice in one response still passes, with another tool call in the same response.
+- [x] Cancelling during concurrent calls stops them all and discards the turn, checked through `RunTurn`.

@@ -65,14 +65,18 @@ type Model interface {
 	Stream(ctx context.Context, req ModelRequest, onText func(string)) (ModelResponse, error)
 }
 
+// Tool is called from several goroutines at once: a response's calls run at
+// the same time, two of them possibly to the same tool.
 type Tool interface {
 	Spec() ToolSpec
 	Summary(input json.RawMessage) string
 	Run(ctx context.Context, input json.RawMessage) (string, error)
 }
 
+// Transcript shows an event of the numbered agent's, the parent being 0.
+// Show is called from several goroutines at once while tool calls overlap.
 type Transcript interface {
-	Show(Event)
+	Show(agent int, event Event)
 }
 
 // Skill is a skill's catalog entry: what the model and the user can see

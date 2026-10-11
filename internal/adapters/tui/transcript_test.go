@@ -44,7 +44,7 @@ func TestTurnEventsBecomeEntries(t *testing.T) {
 	// when
 	// ... the events are shown
 	for _, event := range events {
-		store.Show(event)
+		store.Show(0, event)
 	}
 
 	// then
@@ -71,11 +71,11 @@ func TestADividerSeparatesEachTurnFromTheLast(t *testing.T) {
 	store := NewStore()
 	store.AddInfo("model x")
 	store.addUser("one")
-	store.Show(core.ReplyStarted{})
-	store.Show(core.ReplyText{Text: "first"})
+	store.Show(0, core.ReplyStarted{})
+	store.Show(0, core.ReplyText{Text: "first"})
 	store.addUser("two")
-	store.Show(core.ReplyStarted{})
-	store.Show(core.ReplyText{Text: "second"})
+	store.Show(0, core.ReplyStarted{})
+	store.Show(0, core.ReplyText{Text: "second"})
 
 	// when
 	// ... the transcript is rendered 10 columns wide
@@ -101,8 +101,8 @@ func TestExpandedToolOutputHangsUnderItsCommandBehindAGutter(t *testing.T) {
 	// given
 	// ... a shell call and its output, expanded
 	store := NewStore()
-	store.Show(core.ToolStarted{ID: "1", Name: "shell", Summary: "ls"})
-	store.Show(core.ToolFinished{ID: "1", Output: "a\nb\n"})
+	store.Show(0, core.ToolStarted{ID: "1", Name: "shell", Summary: "ls"})
+	store.Show(0, core.ToolFinished{ID: "1", Output: "a\nb\n"})
 	store.setAllFolds(true)
 
 	// when
@@ -139,10 +139,10 @@ func TestCollapsedOutputShowsItsLastLinesUnderACountOfTheRest(t *testing.T) {
 	// given
 	// ... a command with ten lines of output, and one with two
 	store := NewStore()
-	store.Show(core.ToolStarted{ID: "1", Name: "shell", Summary: "seq 10"})
-	store.Show(core.ToolFinished{ID: "1", Output: "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n"})
-	store.Show(core.ToolStarted{ID: "2", Name: "shell", Summary: "ls"})
-	store.Show(core.ToolFinished{ID: "2", Output: "a\nb"})
+	store.Show(0, core.ToolStarted{ID: "1", Name: "shell", Summary: "seq 10"})
+	store.Show(0, core.ToolFinished{ID: "1", Output: "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n"})
+	store.Show(0, core.ToolStarted{ID: "2", Name: "shell", Summary: "ls"})
+	store.Show(0, core.ToolFinished{ID: "2", Output: "a\nb"})
 
 	// when
 	// ... the transcript is rendered
@@ -170,7 +170,7 @@ func TestCollapsedSkillContentShowsOnlyItsSize(t *testing.T) {
 	// given
 	// ... a loaded skill
 	store := NewStore()
-	store.Show(core.SkillLoaded{Name: "review", Content: "<skill_content>\nbody\n</skill_content>"})
+	store.Show(0, core.SkillLoaded{Name: "review", Content: "<skill_content>\nbody\n</skill_content>"})
 
 	// when
 	// ... the transcript is rendered collapsed, then expanded
@@ -192,8 +192,8 @@ func TestErrorsAreNeverFolded(t *testing.T) {
 	// given
 	// ... a failing command with long output
 	store := NewStore()
-	store.Show(core.ToolStarted{ID: "1", Name: "shell", Summary: "make"})
-	store.Show(core.ToolFinished{ID: "1", Output: "1\n2\n3\n4\n5\n6", IsError: true})
+	store.Show(0, core.ToolStarted{ID: "1", Name: "shell", Summary: "make"})
+	store.Show(0, core.ToolFinished{ID: "1", Output: "1\n2\n3\n4\n5\n6", IsError: true})
 
 	// when
 	// ... the transcript is rendered
@@ -206,12 +206,32 @@ func TestErrorsAreNeverFolded(t *testing.T) {
 	}
 }
 
+func TestResultsOfCallsRunningAtOnceLandUnderTheirOwnCommands(t *testing.T) {
+	// given
+	// ... two commands started before either finishes
+	store := NewStore()
+	store.Show(0, core.ToolStarted{ID: "1", Name: "shell", Summary: "make"})
+	store.Show(0, core.ToolStarted{ID: "2", Name: "shell", Summary: "ls"})
+
+	// when
+	// ... the second finishes with output, then the first with an error
+	store.Show(0, core.ToolFinished{ID: "2", Output: "a\nb"})
+	store.Show(0, core.ToolFinished{ID: "1", Output: "boom", IsError: true})
+
+	// then
+	// ... each result sits directly under the command that produced it
+	texts := renderedTexts(store, 30)
+	if want := []string{"$ make", "boom", "", "$ ls", "  a", "  b", ""}; !slices.Equal(texts, want) {
+		t.Errorf("lines %q\nwant %q", texts, want)
+	}
+}
+
 func TestYankKeepsBlankLinesInsideExpandedOutput(t *testing.T) {
 	// given
 	// ... expanded output with a blank line in it
 	store := NewStore()
-	store.Show(core.ToolStarted{ID: "1", Name: "shell", Summary: "printf"})
-	store.Show(core.ToolFinished{ID: "1", Output: "a\n\nb"})
+	store.Show(0, core.ToolStarted{ID: "1", Name: "shell", Summary: "printf"})
+	store.Show(0, core.ToolFinished{ID: "1", Output: "a\n\nb"})
 	store.setAllFolds(true)
 	lines := store.render(30)
 
@@ -230,14 +250,14 @@ func TestCommandsWithoutOutputStillStandApart(t *testing.T) {
 	// given
 	// ... two commands with no output, one with whitespace-only output, then a reply
 	store := NewStore()
-	store.Show(core.ToolStarted{ID: "1", Name: "shell", Summary: "true"})
-	store.Show(core.ToolFinished{ID: "1", Output: ""})
-	store.Show(core.ToolStarted{ID: "2", Name: "shell", Summary: "mkdir x"})
-	store.Show(core.ToolFinished{ID: "2", Output: ""})
-	store.Show(core.ToolStarted{ID: "3", Name: "shell", Summary: "echo"})
-	store.Show(core.ToolFinished{ID: "3", Output: " \r\n\n"})
-	store.Show(core.ReplyStarted{})
-	store.Show(core.ReplyText{Text: "done"})
+	store.Show(0, core.ToolStarted{ID: "1", Name: "shell", Summary: "true"})
+	store.Show(0, core.ToolFinished{ID: "1", Output: ""})
+	store.Show(0, core.ToolStarted{ID: "2", Name: "shell", Summary: "mkdir x"})
+	store.Show(0, core.ToolFinished{ID: "2", Output: ""})
+	store.Show(0, core.ToolStarted{ID: "3", Name: "shell", Summary: "echo"})
+	store.Show(0, core.ToolFinished{ID: "3", Output: " \r\n\n"})
+	store.Show(0, core.ReplyStarted{})
+	store.Show(0, core.ReplyText{Text: "done"})
 
 	// when
 	// ... the transcript is rendered
@@ -255,8 +275,8 @@ func TestTrailingWhitespaceDoesNotTakeTailRows(t *testing.T) {
 	// given
 	// ... output ending in CRLF and a whitespace-only line
 	store := NewStore()
-	store.Show(core.ToolStarted{ID: "1", Name: "shell", Summary: "x"})
-	store.Show(core.ToolFinished{ID: "1", Output: "1\r\n2\r\n3\r\n4\r\n5\r\n6\r\nok\r\n  \n"})
+	store.Show(0, core.ToolStarted{ID: "1", Name: "shell", Summary: "x"})
+	store.Show(0, core.ToolFinished{ID: "1", Output: "1\r\n2\r\n3\r\n4\r\n5\r\n6\r\nok\r\n  \n"})
 
 	// when
 	// ... the transcript is rendered
@@ -274,11 +294,11 @@ func TestFoldingNeedsMoreThanOneHiddenLineAndCountsInTheSingular(t *testing.T) {
 	// given
 	// ... a five-line output, a six-line output and a one-line skill
 	store := NewStore()
-	store.Show(core.ToolStarted{ID: "1", Name: "shell", Summary: "seq 5"})
-	store.Show(core.ToolFinished{ID: "1", Output: "1\n2\n3\n4\n5"})
-	store.Show(core.ToolStarted{ID: "2", Name: "shell", Summary: "seq 6"})
-	store.Show(core.ToolFinished{ID: "2", Output: "1\n2\n3\n4\n5\n6"})
-	store.Show(core.SkillLoaded{Name: "s", Content: "one"})
+	store.Show(0, core.ToolStarted{ID: "1", Name: "shell", Summary: "seq 5"})
+	store.Show(0, core.ToolFinished{ID: "1", Output: "1\n2\n3\n4\n5"})
+	store.Show(0, core.ToolStarted{ID: "2", Name: "shell", Summary: "seq 6"})
+	store.Show(0, core.ToolFinished{ID: "2", Output: "1\n2\n3\n4\n5\n6"})
+	store.Show(0, core.SkillLoaded{Name: "s", Content: "one"})
 
 	// when
 	// ... the transcript is rendered
@@ -300,10 +320,10 @@ func TestLongLinesFoldByScreenRows(t *testing.T) {
 	// given
 	// ... output that is one very long line, and output whose last line is long
 	store := NewStore()
-	store.Show(core.ToolStarted{ID: "1", Name: "shell", Summary: "curl"})
-	store.Show(core.ToolFinished{ID: "1", Output: strings.Repeat("x", 500)})
-	store.Show(core.ToolStarted{ID: "2", Name: "shell", Summary: "cat"})
-	store.Show(core.ToolFinished{ID: "2", Output: "a\nb\n" + strings.Repeat("y", 500)})
+	store.Show(0, core.ToolStarted{ID: "1", Name: "shell", Summary: "curl"})
+	store.Show(0, core.ToolFinished{ID: "1", Output: strings.Repeat("x", 500)})
+	store.Show(0, core.ToolStarted{ID: "2", Name: "shell", Summary: "cat"})
+	store.Show(0, core.ToolFinished{ID: "2", Output: "a\nb\n" + strings.Repeat("y", 500)})
 
 	// when
 	// ... the transcript is rendered 40 wide
@@ -323,10 +343,10 @@ func TestSkillsTheModelLoadsFoldLikeSkillsTheUserLoads(t *testing.T) {
 	// given
 	// ... the model calling the skill tool, then a shell command
 	store := NewStore()
-	store.Show(core.ToolStarted{ID: "1", Name: core.SkillToolName, Summary: "skill review"})
-	store.Show(core.ToolFinished{ID: "1", Output: "<skill_content>\nbody\nmore\nmore\nmore\n</skill_content>"})
-	store.Show(core.ToolStarted{ID: "2", Name: "shell", Summary: "ls"})
-	store.Show(core.ToolFinished{ID: "2", Output: "a"})
+	store.Show(0, core.ToolStarted{ID: "1", Name: core.SkillToolName, Summary: "skill review"})
+	store.Show(0, core.ToolFinished{ID: "1", Output: "<skill_content>\nbody\nmore\nmore\nmore\n</skill_content>"})
+	store.Show(0, core.ToolStarted{ID: "2", Name: "shell", Summary: "ls"})
+	store.Show(0, core.ToolFinished{ID: "2", Output: "a"})
 
 	// when
 	// ... the transcript is rendered
@@ -337,5 +357,139 @@ func TestSkillsTheModelLoadsFoldLikeSkillsTheUserLoads(t *testing.T) {
 	want := []string{"$ skill review", "  ··· 6 lines", "", "$ ls", "  a", ""}
 	if !slices.Equal(texts, want) {
 		t.Errorf("lines %q\nwant %q", texts, want)
+	}
+}
+
+func TestAChildsLifecycleIsOneLineThatEndsFinished(t *testing.T) {
+	// given
+	// ... a child that has started
+	store := NewStore()
+	store.Show(0, core.ChildStarted{Child: 1, Model: "anthropic/sonnet"})
+
+	// when
+	// ... it makes two tool calls and finishes
+	store.Show(0, core.ChildProgress{Child: 1, Tools: 1})
+	store.Show(0, core.ChildProgress{Child: 1, Tools: 2})
+	store.Show(0, core.ChildFinished{Child: 1})
+
+	// then
+	// ... the transcript holds one line with its number, model, count and state
+	texts := renderedTexts(store, 60)
+	if want := []string{"agent 1 · anthropic/sonnet · 2 tools · finished", ""}; !slices.Equal(texts, want) {
+		t.Errorf("lines %q\nwant %q", texts, want)
+	}
+}
+
+func TestAChildsLineIsRedrawnWhenItsCountChangesButItsLengthDoesNot(t *testing.T) {
+	// given
+	// ... a running child's line already drawn at two tools
+	store := NewStore()
+	store.Show(0, core.ChildStarted{Child: 1, Model: "anthropic/sonnet"})
+	store.Show(0, core.ChildProgress{Child: 1, Tools: 2})
+	store.render(60)
+
+	// when
+	// ... it makes a third tool call
+	store.Show(0, core.ChildProgress{Child: 1, Tools: 3})
+
+	// then
+	// ... the line shows three
+	texts := renderedTexts(store, 60)
+	if want := []string{"agent 1 · anthropic/sonnet · 3 tools · running", ""}; !slices.Equal(texts, want) {
+		t.Errorf("lines %q\nwant %q", texts, want)
+	}
+}
+
+func TestAChildThatFailsOrIsCancelledSaysSoOnItsLine(t *testing.T) {
+	cases := []struct {
+		name string
+		end  core.Event
+		want string
+	}{
+		{"failed", core.ChildFailed{Child: 3, Reason: "model error"}, "agent 3 · anthropic/haiku · 1 tool · failed"},
+		{"cancelled", core.ChildCancelled{Child: 3}, "agent 3 · anthropic/haiku · 1 tool · cancelled"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			// given
+			// ... a running child that has made one tool call
+			store := NewStore()
+			store.Show(0, core.ChildStarted{Child: 3, Model: "anthropic/haiku"})
+			store.Show(0, core.ChildProgress{Child: 3, Tools: 1})
+
+			// when
+			// ... it ends that way
+			store.Show(0, c.end)
+
+			// then
+			// ... its one line shows the state, and not the reason
+			texts := renderedTexts(store, 60)
+			if want := []string{c.want, ""}; !slices.Equal(texts, want) {
+				t.Errorf("lines %q\nwant %q", texts, want)
+			}
+		})
+	}
+}
+
+func TestAChildWaitingForASlotShowsNoToolCount(t *testing.T) {
+	// given
+	// ... an empty transcript
+	store := NewStore()
+
+	// when
+	// ... a child has to wait for a slot
+	store.Show(0, core.ChildWaiting{Child: 6, Model: "anthropic/sonnet"})
+
+	// then
+	// ... its line says waiting, without a count
+	texts := renderedTexts(store, 60)
+	if want := []string{"agent 6 · anthropic/sonnet · waiting", ""}; !slices.Equal(texts, want) {
+		t.Errorf("lines %q\nwant %q", texts, want)
+	}
+}
+
+func TestAWaitingChildThatGetsASlotKeepsItsLine(t *testing.T) {
+	// given
+	// ... a child waiting for a slot, with another child's line after it
+	store := NewStore()
+	store.Show(0, core.ChildWaiting{Child: 6, Model: "anthropic/sonnet"})
+	store.Show(0, core.ChildWaiting{Child: 7, Model: "anthropic/sonnet"})
+
+	// when
+	// ... the first gets a slot
+	store.Show(0, core.ChildStarted{Child: 6, Model: "anthropic/sonnet"})
+
+	// then
+	// ... the same line now says running, with a count
+	texts := renderedTexts(store, 60)
+	want := []string{"agent 6 · anthropic/sonnet · 0 tools · running", "", "agent 7 · anthropic/sonnet · waiting", ""}
+	if !slices.Equal(texts, want) {
+		t.Errorf("lines %q\nwant %q", texts, want)
+	}
+}
+
+func TestAnAgentCallShowsOnlyItsChildsStatusLine(t *testing.T) {
+	// given
+	// ... a shell command, then the model calling the agent tool
+	store := NewStore()
+	store.Show(0, core.ToolStarted{ID: "1", Name: "shell", Summary: "ls"})
+	store.Show(0, core.ToolFinished{ID: "1", Output: "a"})
+	store.Show(0, core.ToolStarted{ID: "2", Name: "agent", Summary: "agent find the bug"})
+
+	// when
+	// ... the child runs and the call returns its reply
+	store.Show(0, core.ChildStarted{Child: 1, Model: "anthropic/sonnet"})
+	store.Show(0, core.ChildFinished{Child: 1})
+	store.Show(0, core.ToolFinished{ID: "2", Output: "[agent 1] the bug is in main.go"})
+
+	// then
+	// ... the call has no command and no result, only the status line
+	want := []shownEntry{
+		{entryCommand, "ls"},
+		{entryOutput, "a"},
+		{entryInfo, "agent 1 · anthropic/sonnet · 0 tools · finished"},
+	}
+	if got := shownEntries(store); !slices.Equal(got, want) {
+		t.Errorf("entries %v\nwant %v", got, want)
 	}
 }
