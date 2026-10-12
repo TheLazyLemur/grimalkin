@@ -82,8 +82,9 @@ A model can override `thinking` and `efforts`. A model with no `efforts`, on
 itself or its provider, has no effort levels: grimalkin sends none and the
 status bar shows `effort n/a`.
 
-A key command runs once at startup, for the selected provider only, and can
-prompt in the terminal. grimalkin ignores `ANTHROPIC_*` environment variables.
+A key command runs once at startup, only for the selected provider and any
+provider a [`subagents`](#subagents) entry names, and can prompt in the
+terminal. grimalkin ignores `ANTHROPIC_*` environment variables.
 
 What to put where:
 
@@ -239,12 +240,36 @@ tools and context, and returns only its final reply. The reading behind the
 answer stays out of your conversation. The tool is always on and needs no
 config.
 
-A subagent runs on the same provider and model as the session. It gets the
+A subagent runs on the session's provider and model unless the model picks
+another you have allowed (below). It gets the
 shell and your skills, but not search or the web tools, and it cannot start
 subagents of its own. The reply comes back to the model as `[agent N]`
 followed by the text; passing that number back as `agent` sends the same
 subagent a follow-up, with its history intact. Subagents are numbered from 1
 and last until you quit.
+
+An optional `subagents` block in the config lists the other models subagents
+may run on:
+
+```json
+"subagents": {
+  "models": [
+    { "provider": "ollama", "model": "glm-5.3-flash:cloud", "effort": "low" },
+    { "provider": "ollama", "model": "gemma4:31b-cloud" }
+  ]
+}
+```
+
+Each entry names a declared provider and one of its models, once, and not
+the selected model, which subagents use anyway. `effort` is optional: it must
+be one of that model's efforts, and an entry without one sends none, leaving
+the level to the model. grimalkin refuses to start on an entry that doesn't
+check out, and runs the key command of every provider an entry names at
+startup. A startup line lists the allowed models. The `agent` tool then
+takes a `model`, one of `provider/model` for the session's model and each
+entry; a follow-up to a subagent stays on the model it started on. A
+subagent on another provider sends its task, and whatever it reads with the
+shell, to that provider.
 
 Several `agent` calls in one response run at the same time, as do a
 response's other tool calls. At most five subagents run at once; further
@@ -252,12 +277,25 @@ ones wait for a slot. The parent's turn waits for all of them.
 
 Each subagent shows as one line in the transcript, updated in place:
 `agent 1 · ollama/glm-5.3-flash:cloud · 3 tools · running`, or `waiting`
-while it has no slot. Its work and its reply are not shown.
+while it has no slot. Its work and its reply are not shown there: each
+subagent has a buffer of its own, a transcript like the session's. In VIEW,
+`gf` on a subagent's line opens its buffer, `:ls` lists the buffers and
+`:b N` shows buffer N, the session's own being buffer 0.
 
-`Ctrl-C` stops the turn and every subagent it started.
+The input, `Enter`, `Ctrl-C` and the status bar's model, effort and
+`working` or `ready` go by the buffer on screen. In a subagent's buffer, `Enter` sends your message to
+that subagent as a follow-up, once it has finished its turn, and the answer
+appears there: the session's model is not told. A message is sent as typed,
+so `/name` loads no skill there. `Ctrl-C` stops only that subagent, and the
+call that started it is answered "cancelled by user". A turn you start on a
+subagent takes one of the five places and adds a line for it to the
+session's transcript; `Ctrl-C` in the session's buffer does not stop it.
+
+In the session's buffer, `Ctrl-C` stops the turn and every subagent it started.
 
 > **Warning:** a subagent's shell is the same **unsandboxed** shell, and its
-> commands do not appear in the transcript: only the count of them does.
+> commands do not appear in the session's transcript, only the count of them:
+> open its buffer to see them.
 
 ## Keys
 
@@ -268,14 +306,14 @@ INSERT. Words are whitespace-separated (vim's `W`/`B`/`E`).
 
 | Key                   | Action                                               |
 | --------------------- | ---------------------------------------------------- |
-| `Ctrl-C`              | Stop the running turn (dropped from history); quit when idle |
+| `Ctrl-C`              | Stop the shown buffer's running turn (dropped from history); quit when nothing is running |
 | `PgUp` / `Ctrl-b`     | From the input: jump into VIEW and page up           |
 
 ### INSERT — type a message
 
 | Key                                   | Action                          |
 | ------------------------------------- | ------------------------------- |
-| `Enter`                               | Send                            |
+| `Enter`                               | Send to the shown buffer's agent, unless it is working |
 | `Shift+Enter`, `Alt+Enter`, `Ctrl-J`  | Newline                         |
 | `Ctrl-W` / `Ctrl-U`                   | Delete word back / to line start |
 | `↑` `↓`                               | Move between lines              |
@@ -307,7 +345,16 @@ Bracketed paste goes in as-is, newlines included.
 | `y`, `yy`, `y$`                      | Yank                                       |
 | `za`                                 | Expand / collapse output under the cursor  |
 | `zR` `zM`                            | Expand / collapse all tool output          |
+| `gf`                                 | On a subagent's line: show its buffer      |
+| `:`                                  | Command line: `Enter` runs, `Esc` leaves   |
 | `j` past last line, `Ctrl-w j`       | → NORMAL                                   |
+
+Commands:
+
+| Command  | Action                                                             |
+| -------- | ------------------------------------------------------------------ |
+| `:ls`    | List the buffers: the session as 0, then each subagent with its model and state; `%` marks the one shown. Any key puts the list away |
+| `:b N`   | Show buffer N; `:b 0` is the session's                             |
 | `i a o`                              | → INSERT                                   |
 | `q`                                  | Quit                                       |
 

@@ -48,6 +48,48 @@ func toolCatalogue(sel config.Selection, cwd string) ([]core.Tool, *tools.Search
 	return catalogue, search
 }
 
+// newModel builds the adapter for a provider's wire, or says there is none.
+func newModel(wire, baseURL, key, model, thinking, effort string) (core.Model, error) {
+	if wire != config.WireAnthropicMessages {
+		return nil, fmt.Errorf("no adapter for wire %q", wire)
+	}
+	return anthropic.New(anthropic.Config{
+		BaseURL:   baseURL,
+		APIKey:    key,
+		Model:     model,
+		MaxTokens: maxTokens,
+		Thinking:  thinking,
+		Effort:    effort,
+	}), nil
+}
+
+// subagentModels builds the model for each entry of the config's subagents
+// block, in its order, named provider/model as the agent tool offers them.
+func subagentModels(entries []config.SubagentModel) ([]core.SubagentModel, error) {
+	var models []core.SubagentModel
+	for i, e := range entries {
+		model, err := newModel(e.Wire, e.BaseURL, e.APIKey, e.Model, e.Thinking, e.Effort)
+		if err != nil {
+			return nil, fmt.Errorf("subagents.models[%d] (%s/%s): %w", i, e.Provider, e.Model, err)
+		}
+		models = append(models, core.SubagentModel{Name: e.Provider + "/" + e.Model, Model: model})
+	}
+	return models, nil
+}
+
+// subagentModelsInfo is the startup line naming the models children may run
+// on beside the session's.
+func subagentModelsInfo(entries []config.SubagentModel) string {
+	names := make([]string, len(entries))
+	for i, e := range entries {
+		names[i] = e.Provider + "/" + e.Model
+		if e.Effort != "" {
+			names[i] += " (effort " + e.Effort + ")"
+		}
+	}
+	return "subagent models: " + strings.Join(names, ", ")
+}
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -65,8 +107,13 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if sel.Wire != config.WireAnthropicMessages {
-		panic(fmt.Sprintf("no adapter for wire %q", sel.Wire))
+	model, err := newModel(sel.Wire, sel.BaseURL, sel.APIKey, sel.Model, sel.Thinking, sel.Effort)
+	if err != nil {
+		panic(err) // config accepted a wire this file has no adapter for
+	}
+	children, err := subagentModels(sel.Subagents)
+	if err != nil {
+		return fmt.Errorf("%s: %w", path, err)
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -81,22 +128,16 @@ func run() error {
 	store := tui.NewStore()
 	catalogue, search := toolCatalogue(sel, cwd)
 	agent := &core.Agent{
-		Model: anthropic.New(anthropic.Config{
-			BaseURL:   sel.BaseURL,
-			APIKey:    sel.APIKey,
-			Model:     sel.Model,
-			MaxTokens: maxTokens,
-			Thinking:  sel.Thinking,
-			Effort:    sel.Effort,
-		}),
+		Model:      model,
 		Transcript: store,
 		System:     core.SystemPrompt(osName(), cwd, library.List()),
 		Tools:      catalogue,
 		Skills:     library,
 		// Children get the shell only; they share Skills, so the core gives
 		// them the skill tool. The core never offers them the agent tool.
-		SubagentTools: []core.Tool{tools.Shell{}},
-		ModelName:     sel.Provider + "/" + sel.Model,
+		SubagentTools:  []core.Tool{tools.Shell{}},
+		ModelName:      sel.Provider + "/" + sel.Model,
+		SubagentModels: children,
 	}
 
 	effort := sel.Effort
@@ -104,7 +145,22 @@ func run() error {
 		effort = "n/a"
 	}
 	label := fmt.Sprintf("%s · effort %s", sel.Model, effort)
+	// A child's buffer shows its own model's label. The session's goes in
+	// last: a child on the session's model, a fork included, runs as the
+	// session does, whatever a subagent entry of the same name says.
+	childLabels := map[string]string{}
+	for _, e := range sel.Subagents {
+		effort := e.Effort
+		if effort == "" {
+			effort = "n/a"
+		}
+		childLabels[e.Provider+"/"+e.Model] = fmt.Sprintf("%s · effort %s", e.Model, effort)
+	}
+	childLabels[sel.Provider+"/"+sel.Model] = label
 	store.AddInfo(fmt.Sprintf("provider %s · model %s · cwd %s", sel.Provider, sel.Model, cwd))
+	if len(sel.Subagents) > 0 {
+		store.AddInfo(subagentModelsInfo(sel.Subagents))
+	}
 	if list := library.List(); len(list) > 0 {
 		names := make([]string, len(list))
 		for i, s := range list {
@@ -141,7 +197,7 @@ func run() error {
 	if search != nil && sel.Search.Map {
 		repoMap = search
 	}
-	return tui.Run(agent, store, clipboard.Clipboard{}, label, repoMap)
+	return tui.Run(agent, store, clipboard.Clipboard{}, label, childLabels, repoMap)
 }
 
 func osName() string {

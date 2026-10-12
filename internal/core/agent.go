@@ -20,13 +20,21 @@ type Agent struct {
 	// SubagentTools is the tool list of the children this agent starts.
 	// The agent tool is offered only when it is non-nil.
 	SubagentTools []Tool
-	// ModelName is what Model is called in a child's status line. Required
-	// with SubagentTools.
+	// ModelName is what Model is called, as provider/model: in a child's
+	// status line and in the agent tool's model parameter. Required with
+	// SubagentTools.
 	ModelName string
+	// SubagentModels are the other models a child may be started on, in the
+	// order the agent tool offers them. Empty: children run on Model.
+	SubagentModels []SubagentModel
 
 	number   int    // 0 for the parent
 	parent   *Agent // nil for the parent
 	messages []Message
+	forked   bool // a child's: it started as a copy of the parent
+	// unanswered is a fork's: the results its next message must carry for
+	// the calls its history ends with, until a turn of its is kept.
+	unanswered []ToolResult
 
 	mu        sync.Mutex
 	cancel    context.CancelFunc
@@ -34,6 +42,12 @@ type Agent struct {
 	slots     childSlots // the parent's: which of its children may run
 	running   bool       // a child's: claimed by a call until its turn ends
 	toolCalls int        // a child's: tool calls started in its running turn
+}
+
+// SubagentModel is a model children may run on beside the parent's.
+type SubagentModel struct {
+	Name  string // provider/model, as the agent tool's model parameter takes it
+	Model Model
 }
 
 // errCancelled is the discard reason of a turn whose context was cancelled.
@@ -100,7 +114,7 @@ func (a *Agent) RunTurn(prompt string) {
 // was cancelled.
 func (a *Agent) turn(ctx context.Context, text string) (string, error) {
 	checkpoint := len(a.messages)
-	a.messages = append(a.messages, Message{Role: RoleUser, Text: text})
+	a.messages = append(a.messages, Message{Role: RoleUser, Text: text, ToolResults: a.unanswered})
 
 	specs := a.toolSpecs()
 	for range maxModelCalls {
@@ -123,6 +137,7 @@ func (a *Agent) turn(ctx context.Context, text string) (string, error) {
 
 		switch resp.StopReason {
 		case StopEndTurn:
+			a.unanswered = nil
 			return reply.String(), nil
 		case StopToolUse:
 			if len(resp.ToolCalls) == 0 {
@@ -152,6 +167,25 @@ func (a *Agent) checkWiring() {
 			panic("subagent tools wired without a model name")
 		}
 		a.checkToolNames(a.SubagentTools)
+	}
+	a.checkSubagentModels()
+}
+
+// checkSubagentModels panics unless every allowed model has a model and a
+// name of its own, which the parent's may not be: a name picks one model.
+func (a *Agent) checkSubagentModels() {
+	if len(a.SubagentModels) > 0 && a.SubagentTools == nil {
+		panic("subagent models wired without subagent tools")
+	}
+	names := map[string]bool{a.ModelName: true}
+	for _, m := range a.SubagentModels {
+		if m.Name == "" || m.Model == nil {
+			panic(fmt.Sprintf("subagent model %q wired without a name or a model", m.Name))
+		}
+		if names[m.Name] {
+			panic(fmt.Sprintf("two models named %q", m.Name))
+		}
+		names[m.Name] = true
 	}
 }
 

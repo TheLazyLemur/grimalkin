@@ -184,3 +184,39 @@ func TestAdaptiveThinkingWithNoEffortSendsNoOutputConfig(t *testing.T) {
 		t.Errorf("output_config = %+v, want none", wire.OutputConfig)
 	}
 }
+
+func TestAUserMessageWithToolResultsAndTextSendsTheResultsThenTheTextAndCachesAtTheText(t *testing.T) {
+	// given
+	// ... a conversation ending with a user message that answers a tool call and then says something
+	url, bodyRef, _ := serve(t, toolUseSSE)
+	p := New(Config{BaseURL: url, APIKey: "test-key", Model: "m", MaxTokens: 20_000, Thinking: "enabled"})
+	req := core.ModelRequest{System: "be brief", Messages: []core.Message{
+		{Role: core.RoleUser, Text: "list files"},
+		{Role: core.RoleAssistant, Content: anthropic.NewAssistantMessage(anthropic.NewTextBlock("ok"))},
+		{Role: core.RoleUser, Text: "check it", ToolResults: []core.ToolResult{{ToolUseID: "toolu_0", Content: "running"}}},
+	}}
+
+	// when
+	// ... the request is streamed
+	_, err := p.Stream(context.Background(), req, func(string) {})
+
+	// then
+	// ... the last message is the tool result and then the text, with the conversation's cache breakpoint on the text alone
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire wireRequest
+	if err := json.Unmarshal(*bodyRef, &wire); err != nil {
+		t.Fatalf("request body: %v\n%s", err, *bodyRef)
+	}
+	if len(wire.Messages) != 3 || len(wire.Messages[2].Content) != 2 {
+		t.Fatalf("messages = %+v", wire.Messages)
+	}
+	result, text := wire.Messages[2].Content[0], wire.Messages[2].Content[1]
+	if result["type"] != "tool_result" || result["tool_use_id"] != "toolu_0" || result["cache_control"] != nil {
+		t.Errorf("first block = %+v", result)
+	}
+	if c, _ := text["cache_control"].(map[string]any); text["type"] != "text" || text["text"] != "check it" || c["ttl"] != "1h" {
+		t.Errorf("second block = %+v", text)
+	}
+}

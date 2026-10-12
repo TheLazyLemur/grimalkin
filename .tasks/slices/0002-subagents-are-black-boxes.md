@@ -1,7 +1,7 @@
 ---
 id: 2
 title: Subagents are black boxes
-status: open
+status: closed
 ---
 
 ## Goal
@@ -36,9 +36,34 @@ buffer stays, marked as cancelled.
 
 ## Open in this slice
 
-- Whether `:ls` lists the parent, and how a cancelled or failed child is
-  marked there. Recorded in: the subagents spec.
+None. The subagents spec (TUI buffers, and turns the user starts on a child)
+settles `:ls`, the parent's buffer, and how a user's turn counts.
 
 ## Tasks
+- [x] #12 Decide what `:ls` lists and how ended children are marked
+- [x] #13 One child can be cancelled without ending the parent's turn
+- [x] #14 The user can run a turn on a finished child (after #13)
+- [x] #15 Each agent has its own buffer
+- [x] #16 `:ls` and `:b N` on an ex command line (after #12, #15)
+- [x] #17 `gf` on a status line opens that child's buffer (after #15)
+- [x] #18 Input and Ctrl-C act on the shown agent (after #13, #14, #15)
 
-None yet. Run `to-tasks`.
+Can start now: none; every task is done
+
+```mermaid
+graph TD
+  t12["#12 Decide what `:ls` lists and how ended children are marked"]
+  t13["#13 One child can be cancelled without ending the parent's turn"]
+  t14["#14 The user can run a turn on a finished child"]
+  t15["#15 Each agent has its own buffer"]
+  t16["#16 `:ls` and `:b N` on an ex command line"]
+  t17["#17 `gf` on a status line opens that child's buffer"]
+  t18["#18 Input and Ctrl-C act on the shown agent"]
+  t13 --> t14
+  t12 --> t16
+  t15 --> t16
+  t15 --> t17
+  t13 --> t18
+  t14 --> t18
+  t15 --> t18
+```

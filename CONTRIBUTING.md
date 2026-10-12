@@ -44,7 +44,15 @@ through `Agent.show`, which passes it. A child's lifecycle has its own events,
 each naming the child: waiting, started, progress, finished, failed,
 cancelled. The TUI decides how each looks: it draws a child's lifecycle as
 one status line in the parent's transcript, updated in place, which is all
-an `agent` call shows there, and for now shows only agent 0's turn events.
+an `agent` call shows there. `tui.Store` keeps a transcript per agent, its
+buffer: the parent's from the start, a child's from its first lifecycle
+event, for the session. A turn event goes to its agent's buffer. The model
+shows one buffer at a time (`model.show`) and keeps the cursor and scroll of
+the others as they were left. `:b N` on the ex command line and `gf` on a
+status line switch buffers; `:ls` draws its list over the transcript and
+writes it to no buffer. The status bar and `:ls` write a child's model
+with the label `main.go` hands `tui.Run` for it, keyed by the `provider/model`
+name its lifecycle events carry; a name with no label panics.
 
 **Tools.** A tool implements `core.Tool`: a spec, a `Summary` of a call as a
 command line, and `Run`, which returns output or an error and must honour its
@@ -68,7 +76,11 @@ To add a tool, add a type to `internal/adapters/tools` and list it in
 `toolCatalogue` in `main.go`. That gives it to the parent only. Children get
 the list `main.go` sets as `Agent.SubagentTools`, for now the shell alone; a
 child also has `skill`, because it shares the parent's `Skills`. `main.go`
-sets `Agent.ModelName` to `provider/model` from the config selection.
+sets `Agent.ModelName` to `provider/model` from the config selection, and
+`Agent.SubagentModels` to an adapter per entry of the config's `subagents`
+block, named the same way and in its order (`subagentModels`). `newModel`
+maps a provider's wire to its adapter; an entry on a wire it doesn't know is
+a startup error naming the entry.
 
 **Search.** `tools.Search` lists files with `rg --files` (so `.gitignore`
 holds), filters and keyword-scores them in Go, and sends the best excerpt of
@@ -141,17 +153,35 @@ command's output instead. See `docs/specs/skills.md`.
 is set (`ModelName` is then required, for the status line). A call claims a
 child in call order, before the calls run, so numbers follow the order the
 model wrote them and a second call for the same child is answered "busy". A
-child is an `Agent` with its own number and history, the parent's model,
-transcript and skills, the parent's system prompt plus a subagent note, and
+child is an `Agent` with its own number and history, the parent's
+transcript and skills, the model the call's `model` names (the parent's by
+default; the parameter is offered only when `Agent.SubagentModels` lists
+others, as an enum of the parent's `ModelName` and then theirs, and a
+resumed child keeps the one it started on), the parent's system prompt plus a subagent note, and
 the subagent tool list, so it is never offered `agent`. Its turn runs under
-the parent's tool call context: cancelling the parent cancels it. At most five children run at once
+the parent's tool call context: cancelling the parent cancels it.
+`Agent.CancelChild(n)` cancels child n alone, running or waiting: its turn is
+discarded, its call is answered `[agent N]` and "cancelled by user" as an
+error, and the parent's turn and its other children go on.
+`Agent.StartChildTurn(n, prompt)` claims child n for a turn the user starts
+on it, or returns why it can't (unknown, busy), and hands back the function
+that runs it: the same run as a call's, slot and lifecycle events included,
+but outside the parent's turn, so only `CancelChild` cancels it. At most five children run at once
 (`maxRunningChildren`): a call requests its slot when it claims its child,
 so slots go out in call order, and a child with none reports waiting until
 one is released; cancelled while waiting, it ends cancelled without having
 started. The call's
 result is `[agent N]`, a newline and the text streamed by the child's last
 response, capped below the number; a discarded turn gives the reason the
-same way, as an error. Children live in the parent for the session. See
+same way, as an error. A call with `fork` starts a fork instead: a copy of the parent's history up
+to the response being handled, with the parent's own system prompt, tool
+specs and model, so the request reads the parent's prompt cache. Its first
+message answers every call of that response with a placeholder result and
+then gives the task (a user `Message` with both `ToolResults` and `Text`,
+sent results first); a fork whose first turn is discarded gets the
+placeholders again on its next. A fork is offered `agent` like the parent
+and is answered "subagents can't start subagents". Children live in the
+parent for the session. See
 `docs/specs/subagents.md`.
 
 **Messages.** Assistant message content is opaque to the core: the provider

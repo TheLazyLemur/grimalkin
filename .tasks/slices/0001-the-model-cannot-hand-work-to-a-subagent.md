@@ -1,7 +1,7 @@
 ---
 id: 1
 title: The model cannot hand work to a subagent
-status: open
+status: closed
 ---
 
 ## Goal

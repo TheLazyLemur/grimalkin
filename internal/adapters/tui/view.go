@@ -36,6 +36,8 @@ const (
 	viewToggleFold
 	viewExpandAll
 	viewCollapseAll
+	viewCommand
+	viewGoToFile
 )
 
 type search struct {
@@ -112,6 +114,8 @@ func (v *transcriptView) handleKey(lines []screenLine, height int, register *[]r
 		v.search.typedBackward = char == '?'
 		v.search.typed = nil
 		return viewNoop
+	case char == ':':
+		return viewCommand
 	}
 	if len(lines) == 0 {
 		return viewNoop
@@ -139,6 +143,10 @@ func (v *transcriptView) handleKey(lines []screenLine, height int, register *[]r
 		if (char == 'j' || key == keyDown) && v.cursor.line == len(lines)-1 {
 			return viewFocusInput
 		}
+	}
+
+	if pendingKey == 'g' && char == 'f' {
+		return viewGoToFile
 	}
 
 	switch char {

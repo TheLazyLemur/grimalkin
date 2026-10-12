@@ -45,11 +45,21 @@ func validConfig() raw {
 				"thinking": "enabled",
 				"models": raw{
 					"glm":   raw{"efforts": []any{"low", "high", "max"}},
+					"flash": raw{"efforts": []any{"low", "high", "max"}},
 					"gemma": raw{},
 				},
 			},
 		},
 	}
+}
+
+// subagentsBlock is a subagents block allowing the given entries.
+func subagentsBlock(entries ...raw) raw {
+	models := make([]any, len(entries))
+	for i, e := range entries {
+		models[i] = e
+	}
+	return raw{"models": models}
 }
 
 func writeConfig(t *testing.T, c raw) string {
@@ -270,6 +280,29 @@ func TestInvalidConfigsAreRejected(t *testing.T) {
 		{"unknown web provider", func(c raw) { c["web"] = raw{"nope": raw{"apiKey": "k"}} }, `web.nope: unknown provider (known: ollama)`},
 		{"web provider without a key", func(c raw) { c["web"] = raw{"ollama": raw{}} }, `web.ollama: missing "apiKey"`},
 		{"unknown web provider key", func(c raw) { c["web"] = raw{"ollama": raw{"apiKey": "k", "baseUrl": "x"}} }, `unknown field "baseUrl"`},
+		{"subagent entry without a provider", func(c raw) { c["subagents"] = subagentsBlock(raw{"model": "glm"}) }, `subagents.models[0]: missing "provider"`},
+		{"subagent entry without a model", func(c raw) { c["subagents"] = subagentsBlock(raw{"provider": "ollama"}) }, `subagents.models[0]: missing "model"`},
+		{"subagent entry with an undeclared provider", func(c raw) {
+			c["subagents"] = subagentsBlock(raw{"provider": "ollama", "model": "flash"}, raw{"provider": "nope", "model": "glm"})
+		}, `subagents.models[1]: provider "nope" is not declared`},
+		{"subagent entry with an unlisted model", func(c raw) { c["subagents"] = subagentsBlock(raw{"provider": "ollama", "model": "nope"}) }, `subagents.models[0]: model "nope" is not listed under provider "ollama"`},
+		{"subagent entry with an effort outside the model's efforts", func(c raw) {
+			c["subagents"] = subagentsBlock(raw{"provider": "ollama", "model": "flash", "effort": "medium"})
+		}, `subagents.models[0]: effort "medium" is not one of flash's efforts: low, high, max`},
+		{"subagent entry with an effort for a model that has none", func(c raw) {
+			c["subagents"] = subagentsBlock(raw{"provider": "ollama", "model": "gemma", "effort": "low"})
+		}, `subagents.models[0]: effort "low" given, but gemma has no effort levels`},
+		{"subagent entry listed twice", func(c raw) {
+			c["subagents"] = subagentsBlock(raw{"provider": "ollama", "model": "gemma"}, raw{"provider": "ollama", "model": "gemma"})
+		}, `subagents.models[1]: ollama/gemma is already listed`},
+		{"subagent entry naming the selected model", func(c raw) {
+			c["subagents"] = subagentsBlock(raw{"provider": "ollama", "model": "gemma"}, raw{"provider": "ollama", "model": "glm", "effort": "low"})
+		}, `subagents.models[1]: ollama/glm is the selected model, which subagents already use`},
+		{"subagent entry whose provider's key command fails", func(c raw) { c["subagents"] = subagentsBlock(raw{"provider": "anthropic", "model": "opus"}) }, `providers.anthropic: api key command: exit status 1`},
+		{"unknown subagents key", func(c raw) { c["subagents"] = raw{"model": []any{}} }, `unknown field "model"`},
+		{"unknown subagent entry key", func(c raw) {
+			c["subagents"] = subagentsBlock(raw{"provider": "ollama", "model": "flash", "thinking": "enabled"})
+		}, `unknown field "thinking"`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -375,5 +408,109 @@ func TestWithoutAUsableWebProviderThereAreNoWebToolsButGrimalkinStillStarts(t *t
 				t.Errorf("web = %+v, info = %q, want none and %q", sel.Web, sel.WebInfo, tc.want)
 			}
 		})
+	}
+}
+
+func TestASubagentsBlockResolvesItsEntriesInTheOrderWritten(t *testing.T) {
+	// given
+	// ... three allowed subagent models across both providers, anthropic's key from a command
+	c := validConfig()
+	c.provider("anthropic")["apiKey"] = `!printf 'sk-a\n'`
+	c["subagents"] = subagentsBlock(
+		raw{"provider": "ollama", "model": "flash", "effort": "low"},
+		raw{"provider": "anthropic", "model": "haiku", "effort": "high"},
+		raw{"provider": "ollama", "model": "gemma"},
+	)
+	path := writeConfig(t, c)
+
+	// when
+	// ... it is loaded
+	sel, err := Load(path)
+
+	// then
+	// ... each entry carries its provider's endpoint and key, and its model's thinking and effort
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []SubagentModel{
+		{Provider: "ollama", Wire: "anthropic-messages", BaseURL: "http://localhost:11434", APIKey: "ollama", Model: "flash", Thinking: "enabled", Effort: "low"},
+		{Provider: "anthropic", Wire: "anthropic-messages", BaseURL: "https://api.anthropic.com", APIKey: "sk-a", Model: "haiku", Thinking: "enabled", Effort: "high"},
+		{Provider: "ollama", Wire: "anthropic-messages", BaseURL: "http://localhost:11434", APIKey: "ollama", Model: "gemma", Thinking: "enabled"},
+	}
+	if !reflect.DeepEqual(sel.Subagents, want) {
+		t.Errorf("subagents = %+v, want %+v", sel.Subagents, want)
+	}
+}
+
+func TestASubagentEntryWithoutAnEffortResolvesToNoEffort(t *testing.T) {
+	// given
+	// ... an entry naming no effort for flash, which has effort levels
+	c := validConfig()
+	c["subagents"] = subagentsBlock(raw{"provider": "ollama", "model": "flash"})
+	path := writeConfig(t, c)
+
+	// when
+	// ... it is loaded
+	sel, err := Load(path)
+
+	// then
+	// ... the entry has no effort, not the selection's
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sel.Subagents) != 1 || sel.Subagents[0].Effort != "" {
+		t.Errorf("subagents = %+v, want one entry with no effort", sel.Subagents)
+	}
+}
+
+func TestAProviderNoSubagentEntryOrSelectionUsesHasNoKeyCommandRun(t *testing.T) {
+	// given
+	// ... a subagents block using only ollama, while anthropic's key command would fail
+	c := validConfig()
+	c["subagents"] = subagentsBlock(raw{"provider": "ollama", "model": "gemma"})
+	path := writeConfig(t, c)
+
+	// when
+	// ... it is loaded
+	_, err := Load(path)
+
+	// then
+	// ... loading succeeds, so anthropic's key command never ran
+	if err != nil {
+		t.Errorf("err = %v, want none", err)
+	}
+}
+
+func TestAProviderUsedBySeveralEntriesAndTheSelectionHasItsKeyCommandRunOnce(t *testing.T) {
+	// given
+	// ... ollama selected and named by two entries, its key command recording each run
+	runs := filepath.Join(t.TempDir(), "runs")
+	c := validConfig()
+	c.provider("ollama")["apiKey"] = "!echo run >> '" + runs + "'; echo sk-o"
+	c["subagents"] = subagentsBlock(
+		raw{"provider": "ollama", "model": "flash", "effort": "low"},
+		raw{"provider": "ollama", "model": "gemma"},
+	)
+	path := writeConfig(t, c)
+
+	// when
+	// ... it is loaded
+	sel, err := Load(path)
+
+	// then
+	// ... the command ran once, and the selection and both entries carry its key
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorded, err := os.ReadFile(runs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(recorded) != "run\n" {
+		t.Errorf("key command runs = %q, want one", recorded)
+	}
+	keys := []string{sel.APIKey, sel.Subagents[0].APIKey, sel.Subagents[1].APIKey}
+	if want := []string{"sk-o", "sk-o", "sk-o"}; !reflect.DeepEqual(keys, want) {
+		t.Errorf("keys = %q, want %q", keys, want)
 	}
 }

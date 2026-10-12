@@ -10,6 +10,10 @@ import (
 const maxToolResultBytes = 30_000
 
 func (a *Agent) toolSpecs() []ToolSpec {
+	if a.forked {
+		// The parent's, agent included, or the fork misses its cache.
+		return a.parent.toolSpecs()
+	}
 	specs := make([]ToolSpec, 0, len(a.Tools)+2)
 	for _, tool := range a.Tools {
 		specs = append(specs, tool.Spec())
@@ -18,7 +22,7 @@ func (a *Agent) toolSpecs() []ToolSpec {
 		specs = append(specs, skillToolSpec(names))
 	}
 	if a.SubagentTools != nil {
-		specs = append(specs, agentToolSpec)
+		specs = append(specs, a.agentToolSpec())
 	}
 	return specs
 }
@@ -54,19 +58,19 @@ func (a *Agent) runTools(ctx context.Context, calls []ToolCall) []ToolResult {
 		loaded = append(loaded, results[i])
 	}
 
+	// A panic in one call stops the others and is raised again on the
+	// turn's goroutine, where a panic in a call run in turn would be.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	// Claimed here, not in the calls' goroutines, so children are numbered
 	// in the order the model wrote the calls. Every claim is run below.
 	claims := map[int]childClaim{}
 	for _, i := range rest {
 		if a.SubagentTools != nil && calls[i].Name == AgentToolName {
-			claims[i] = a.claimChild(calls[i].Input)
+			claims[i] = a.claimChild(ctx, calls[i], calls)
 		}
 	}
-
-	// A panic in one call stops the others and is raised again on the
-	// turn's goroutine, where a panic in a call run in turn would be.
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	var wg sync.WaitGroup
 	var once sync.Once
 	var panicked any
@@ -95,6 +99,11 @@ func (a *Agent) runTools(ctx context.Context, calls []ToolCall) []ToolResult {
 }
 
 func (a *Agent) runTool(ctx context.Context, call ToolCall) ToolResult {
+	if a.forked && call.Name == AgentToolName {
+		return a.runCall(call, AgentToolName+" "+string(call.Input), maxToolResultBytes, func() (string, error) {
+			return "", errForkStartsSubagent
+		})
+	}
 	tool := a.findTool(call.Name)
 	if tool == nil {
 		return a.runCall(call, call.Name, maxToolResultBytes, func() (string, error) {
