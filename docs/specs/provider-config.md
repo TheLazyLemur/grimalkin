@@ -54,7 +54,7 @@ environment variables are not read.
 16. As a user, I want to override the accepted effort values on an individual model, so that models whose effort levels differ from their provider's are validated correctly.
 17. As a user, I want to give an API key literally in the file, so that dummy keys like Ollama's are trivial to configure.
 18. As a user, I want to give an API key as a command prefixed with `!`, so that real secrets can come from a password manager, keychain or environment without being written into the file.
-19. As a user, I want the key command to run only for the selected provider, so that I'm not prompted by password managers for providers I'm not using.
+19. As a user, I want the key command to run only for the selected provider, so that I'm not prompted by password managers for providers I'm not using. (A provider a `subagents` entry names is in use.)
 20. As a user, I want the key command to run once at startup, so that I'm not prompted repeatedly during a session.
 21. As a user, I want grimalkin to refuse to start when the key command exits non-zero, so that it never sends a request with a key it failed to fetch.
 22. As a user, I want grimalkin to refuse to start when the key command prints nothing, so that it never sends a request with an empty key.
@@ -118,14 +118,27 @@ environment variables are not read.
 - **Fields depend on the wire.** Each wire defines which provider and model fields it accepts. `wire`, `baseUrl`, `apiKey`, `models` and `efforts` are common to every wire; `efforts` names are sent verbatim in whatever effort parameter the wire has. `thinking` belongs to the `anthropic-messages` wire only: required there, and an unknown key under any other wire.
 - **Thinking** is a closed set: `adaptive`, `enabled`, `disabled`. Each maps to the matching thinking setting on the request; `enabled` also carries a fixed `budget_tokens` that is not configurable (Ollama ignores it; Claude 5.x rejects `enabled` regardless). Any other value is a startup error.
 - **Effort** is sent verbatim as `output_config.effort`, so provider-defined names pass through unchanged. When the resolved model has `efforts`, it is validated against that list, never translated between names.
-- **API key:** a string. A leading `!` means run the rest with `/bin/sh -c`. The command runs before the TUI starts, with stdin and stderr attached to the terminal so it can prompt; only stdout is captured, with trailing whitespace trimmed. There is no timeout: a waiting prompt is visible and the user can interrupt it. Non-zero exit or empty output is a startup error naming the provider and exit status. Runs once, at startup, for the selected provider only. No escape for literal keys starting with `!`.
+- **API key:** a string. A leading `!` means run the rest with `/bin/sh -c`. The command runs before the TUI starts, with stdin and stderr attached to the terminal so it can prompt; only stdout is captured, with trailing whitespace trimmed. There is no timeout: a waiting prompt is visible and the user can interrupt it. Non-zero exit or empty output is a startup error naming the provider and exit status. Runs once per provider, at startup, and only for a provider the selection or a `subagents` entry uses. No escape for literal keys starting with `!`.
+- **Subagent models:** an optional top-level `subagents` block lists the models a subagent may run on (see `subagents.md`):
+
+  ```json
+  "subagents": {
+    "models": [
+      { "provider": "ollama", "model": "glm-5.3-flash:cloud", "effort": "low" },
+      { "provider": "ollama", "model": "gemma4:31b-cloud" }
+    ]
+  }
+  ```
+
+  Each entry names a declared provider and one of its models, and resolves like the selection: the provider's wire, base URL and key, and the model's thinking. Entries keep the order written, and a provider and model pair may be listed once. The selected provider and model may not be listed: children use that model by default, and a second entry for it, perhaps with another effort, would be a second model under the same name. `effort` is optional. Unlike the top-level `effort`, it is never ignored, because an entry names one model: it must be one of that model's `efforts`, and is an error on a model with no effort levels. An entry without `effort` sends none, leaving the level to the model's own default; it does not take the top-level `effort`. Entries are checked before any key command runs. Without the block, or with an empty `models`, there are no subagent models.
 - **The config is the only source of endpoint and credentials.** The SDK client is built with its environment defaults disabled, so `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, profiles and federation are never read. Without this, an `ANTHROPIC_AUTH_TOKEN` in the environment is sent as a Bearer header alongside the configured key, to whatever `baseUrl` the config names.
-- **Validation at startup**, failing loudly. Structure is checked for every provider and model in the file; only the key command is limited to the selected provider. Errors:
+- **Validation at startup**, failing loudly. Structure is checked for every provider and model in the file; only key commands are limited, to the providers the selection or a `subagents` entry uses. Errors:
   - top level: missing `provider`, `model`, `effort` or `providers`; `provider` not declared; `model` not listed under it; `effort` not in the resolved `efforts` (when there is one)
   - provider: missing `wire`, `baseUrl`, `apiKey` or `models`; missing `thinking` on an `anthropic-messages` provider; unknown `wire`; `thinking` outside the closed set; empty `efforts`; empty `models`
   - model: override `thinking` outside the closed set; empty override `efforts`
   - anywhere: an unknown key
-  - selected provider: key command exits non-zero or prints nothing
+  - `subagents` entry, named by its position (`subagents.models[1]`): missing `provider` or `model`; `provider` not declared; `model` not listed under it; `effort` not in the model's resolved `efforts`, or given for a model with none; a provider and model pair already listed; the selected provider and model listed
+  - a provider used by the selection or a `subagents` entry: key command exits non-zero or prints nothing
 
   Provider-level `thinking` is required even when every model overrides it: one rule, no exceptions.
 - **No model names in code.** Model-specific knowledge lives only in the config file.
@@ -144,6 +157,7 @@ environment variables are not read.
   - a literal key
   - a `!` command key: success with trailing whitespace trimmed, non-zero exit, empty output
   - an unselected provider whose key command would fail (`!false`) not being run
+  - a `subagents` block resolving in the order written; each entry error in the validation list; an entry without `effort`; a provider used only by an entry having its key command run, one used by several entries and the selection having it run once, and one used by neither not at all
 - **Wire seam (existing):** extend the Anthropic adapter's `httptest` test, which already records the request body, to assert:
   - `thinking` and `output_config.effort` are sent as configured, and no `output_config` is sent when there is no effort
   - no `Authorization` header is sent when `ANTHROPIC_AUTH_TOKEN` is set in the test's environment

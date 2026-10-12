@@ -2,8 +2,8 @@
 // an endpoint speaking a wire format, and the user's choice of provider, model
 // and effort. See docs/specs/provider-config.md.
 //
-// Everything in the file is validated, not just the selection; only the
-// selected provider's key command is run.
+// Everything in the file is validated, not just the selection; a provider's
+// key command is run only when the selection or a subagent entry uses it.
 package config
 
 import (
@@ -35,6 +35,10 @@ type Selection struct {
 	Thinking string // empty for wires without a thinking setting
 	Effort   string // empty when the model has no effort levels
 
+	// Subagents are the models the config's subagents block allows children
+	// to run on, in the order written. Nil without the block.
+	Subagents []SubagentModel
+
 	// SkillDirs are the directories to load skills from, as written: a
 	// leading ~ and relative paths are left to the caller. Earlier wins.
 	SkillDirs []string
@@ -54,6 +58,18 @@ type Selection struct {
 	// WebInfo is the startup line for the web tools: the provider in use,
 	// or why there is none.
 	WebInfo string
+}
+
+// SubagentModel is one resolved entry of the subagents block: everything
+// needed to build the adapter for a model children may run on.
+type SubagentModel struct {
+	Provider string
+	Wire     string
+	BaseURL  string
+	APIKey   string
+	Model    string
+	Thinking string
+	Effort   string // empty when the entry names none: no effort is sent
 }
 
 // Web is the resolved web block: the provider in use and its key.
@@ -88,6 +104,17 @@ type file struct {
 	SkillDirs []string            `json:"skillDirs"`
 	Search    *search             `json:"search"`
 	Web       map[string]web      `json:"web"`
+	Subagents *subagents          `json:"subagents"`
+}
+
+type subagents struct {
+	Models []subagentEntry `json:"models"`
+}
+
+type subagentEntry struct {
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+	Effort   string `json:"effort"`
 }
 
 type web struct {
@@ -188,21 +215,9 @@ func (f file) resolve() (Selection, error) {
 		}
 	}
 
-	p, ok := f.Providers[f.Provider]
-	if !ok {
-		return Selection{}, fmt.Errorf("provider %q is not declared", f.Provider)
-	}
-	m, ok := p.Models[f.Model]
-	if !ok {
-		return Selection{}, fmt.Errorf("model %q is not listed under provider %q", f.Model, f.Provider)
-	}
-	thinking := p.Thinking
-	if m.Thinking != nil {
-		thinking = *m.Thinking
-	}
-	efforts := p.Efforts
-	if m.Efforts != nil {
-		efforts = m.Efforts
+	p, thinking, efforts, err := f.lookup(f.Provider, f.Model)
+	if err != nil {
+		return Selection{}, err
 	}
 	effort := ""
 	if efforts != nil {
@@ -212,9 +227,38 @@ func (f file) resolve() (Selection, error) {
 		}
 		effort = f.Effort
 	}
-	key, err := resolveKey(p.APIKey)
+	// Every subagent entry is checked before any key command runs, so a
+	// mistake in the block is not reported after a password prompt.
+	var subagentModels []SubagentModel
+	if f.Subagents != nil {
+		subagentModels, err = f.subagentModels()
+		if err != nil {
+			return Selection{}, err
+		}
+	}
+	// A provider's key command runs once, however many of the selection and
+	// the subagent entries use it.
+	keys := map[string]string{}
+	providerKey := func(name string) (string, error) {
+		if key, ok := keys[name]; ok {
+			return key, nil
+		}
+		key, err := resolveKey(f.Providers[name].APIKey)
+		if err != nil {
+			return "", fmt.Errorf("providers.%s: %w", name, err)
+		}
+		keys[name] = key
+		return key, nil
+	}
+	key, err := providerKey(f.Provider)
 	if err != nil {
-		return Selection{}, fmt.Errorf("providers.%s: %w", f.Provider, err)
+		return Selection{}, err
+	}
+	for i := range subagentModels {
+		subagentModels[i].APIKey, err = providerKey(subagentModels[i].Provider)
+		if err != nil {
+			return Selection{}, err
+		}
 	}
 	// Search is optional: without a key the model simply doesn't get the
 	// tool, and the reason is reported rather than refusing to start.
@@ -264,12 +308,85 @@ func (f file) resolve() (Selection, error) {
 		Model:     f.Model,
 		Thinking:  thinking,
 		Effort:    effort,
+		Subagents: subagentModels,
 		SkillDirs: f.SkillDirs,
 		Search:    searchSel,
 		SearchOff: searchOff,
 		Web:       webSel,
 		WebInfo:   webInfo,
 	}, nil
+}
+
+// lookup finds a declared provider and one of its models, and returns the
+// provider with the model's resolved thinking and efforts: the model's own
+// where it overrides, else the provider's. Efforts are nil when the model has
+// no effort levels.
+func (f file) lookup(providerName, modelName string) (provider, string, []string, error) {
+	p, ok := f.Providers[providerName]
+	if !ok {
+		return provider{}, "", nil, fmt.Errorf("provider %q is not declared", providerName)
+	}
+	m, ok := p.Models[modelName]
+	if !ok {
+		return provider{}, "", nil, fmt.Errorf("model %q is not listed under provider %q", modelName, providerName)
+	}
+	thinking := p.Thinking
+	if m.Thinking != nil {
+		thinking = *m.Thinking
+	}
+	efforts := p.Efforts
+	if m.Efforts != nil {
+		efforts = m.Efforts
+	}
+	return p, thinking, efforts, nil
+}
+
+// subagentModels resolves the subagents block's entries in order, without
+// their keys. Unlike the top-level effort, an entry's effort is never
+// ignored: it names one model, so an effort that model cannot take is a
+// mistake.
+func (f file) subagentModels() ([]SubagentModel, error) {
+	resolved := make([]SubagentModel, 0, len(f.Subagents.Models))
+	seen := map[[2]string]bool{}
+	for i, e := range f.Subagents.Models {
+		at := fmt.Sprintf("subagents.models[%d]", i)
+		if e.Provider == "" {
+			return nil, fmt.Errorf(`%s: missing "provider"`, at)
+		}
+		if e.Model == "" {
+			return nil, fmt.Errorf(`%s: missing "model"`, at)
+		}
+		p, thinking, efforts, err := f.lookup(e.Provider, e.Model)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", at, err)
+		}
+		// The selected model is every child's default, so an entry for it
+		// would name the same model twice, perhaps with another effort.
+		if e.Provider == f.Provider && e.Model == f.Model {
+			return nil, fmt.Errorf("%s: %s/%s is the selected model, which subagents already use", at, e.Provider, e.Model)
+		}
+		if seen[[2]string{e.Provider, e.Model}] {
+			return nil, fmt.Errorf("%s: %s/%s is already listed", at, e.Provider, e.Model)
+		}
+		seen[[2]string{e.Provider, e.Model}] = true
+		switch {
+		case e.Effort == "":
+		case efforts == nil:
+			return nil, fmt.Errorf("%s: effort %q given, but %s has no effort levels", at, e.Effort, e.Model)
+		case !slices.Contains(efforts, e.Effort):
+			return nil, fmt.Errorf("%s: effort %q is not one of %s's efforts: %s",
+				at, e.Effort, e.Model, strings.Join(efforts, ", "))
+		}
+		resolved = append(resolved, SubagentModel{
+			Provider: e.Provider,
+			Wire:     p.Wire,
+			BaseURL:  p.BaseURL,
+			Model:    e.Model,
+			Thinking: thinking,
+			Effort:   e.Effort,
+		})
+	}
+	return resolved, nil
 }
 
 // validate returns errors prefixed with ": " or ".models.<name>: ", so the

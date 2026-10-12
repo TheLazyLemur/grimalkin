@@ -95,10 +95,15 @@ conversation and all, which reads the parent's cached prompt cheaply.
   tool list built in the composition root, initially the shell plus the
   skill tool. The `agent` tool is never on it.
 - **Forks** send the parent's exact system prompt and tool list and a copy
-  of the parent's history up to the response being handled, with thinking
-  intact, followed by the task as a user message. That keeps the prompt
-  cache and thinking valid (both are bound to the system prompt, tools and
-  model). A fork sees the `agent` tool; the core answers its calls with an
+  of the parent's history up to and including the response being handled,
+  with thinking intact. That response holds tool calls, the fork's own
+  `agent` call among them, and each needs a result before any user text, so
+  the fork's history ends with one user message: a placeholder result for
+  every tool call in the response (its own call's says it is the fork that
+  call started; the others' say the call is running in the parent), then
+  the task as text. That keeps the prompt cache and thinking valid (both
+  are bound to the system prompt, tools and model). The parent's own
+  history is not changed by the fork. A fork sees the `agent` tool; the core answers its calls with an
   error ("subagents can't start subagents").
 - **Concurrent tool calls.** All tool calls in a response run at once, shell
   included, except skill tool calls, which run first and in order so the
@@ -134,9 +139,15 @@ conversation and all, which reads the parent's cached prompt cheaply.
 - **TUI buffers.** The TUI keeps one transcript per agent and shows one at a
   time, full screen. A minimal ex command line handles `:ls` and `:b N`;
   `gf` on a child's status line in the parent's transcript opens its buffer.
+  The parent is buffer 0: `:ls` lists it first, then every child by number,
+  each with its model and its state in the status line's words (waiting,
+  running, finished, failed, cancelled), and `:b 0` returns to it.
   The status bar shows the shown agent's model, effort and state. The input
   sends to the shown agent; Enter does nothing while that agent is running.
   Ctrl-C cancels the shown agent's turn.
+- **Turns the user starts on a child** run like any other run of that
+  child: they take one of the five slots, waiting if none is free, and add
+  a new status line to the parent's transcript.
 
 ## Testing Decisions
 
@@ -163,8 +174,7 @@ conversation and all, which reads the parent's cached prompt cheaply.
 
 ## Open Questions
 
-- Whether `:ls` lists the parent, and how a cancelled or failed child is
-  marked there.
+None.
 
 ## Out of Scope
 

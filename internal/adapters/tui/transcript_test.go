@@ -14,9 +14,9 @@ type shownEntry struct {
 	text string
 }
 
-func shownEntries(s *Store) []shownEntry {
+func shownEntries(s *Store, agent int) []shownEntry {
 	var out []shownEntry
-	for _, e := range s.entries {
+	for _, e := range s.buffers[agent].entries {
 		out = append(out, shownEntry{e.kind, e.text.String()})
 	}
 	return out
@@ -60,7 +60,7 @@ func TestTurnEventsBecomeEntries(t *testing.T) {
 		{entryReply, "Again"},
 		{entryError, "cancelled (turn discarded)"},
 	}
-	if got := shownEntries(store); !slices.Equal(got, want) {
+	if got := shownEntries(store, 0); !slices.Equal(got, want) {
 		t.Errorf("entries = %+v\nwant %+v", got, want)
 	}
 }
@@ -70,16 +70,16 @@ func TestADividerSeparatesEachTurnFromTheLast(t *testing.T) {
 	// ... startup info and two turns
 	store := NewStore()
 	store.AddInfo("model x")
-	store.addUser("one")
+	store.addUser(0, "one")
 	store.Show(0, core.ReplyStarted{})
 	store.Show(0, core.ReplyText{Text: "first"})
-	store.addUser("two")
+	store.addUser(0, "two")
 	store.Show(0, core.ReplyStarted{})
 	store.Show(0, core.ReplyText{Text: "second"})
 
 	// when
 	// ... the transcript is rendered 10 columns wide
-	lines := store.render(10)
+	lines := store.render(0, 10)
 
 	// then
 	// ... a short centred hairline sits before the second turn only, and is left out of yanks
@@ -103,11 +103,11 @@ func TestExpandedToolOutputHangsUnderItsCommandBehindAGutter(t *testing.T) {
 	store := NewStore()
 	store.Show(0, core.ToolStarted{ID: "1", Name: "shell", Summary: "ls"})
 	store.Show(0, core.ToolFinished{ID: "1", Output: "a\nb\n"})
-	store.setAllFolds(true)
+	store.setAllFolds(0, true)
 
 	// when
 	// ... the transcript is rendered
-	lines := store.render(20)
+	lines := store.render(0, 20)
 
 	// then
 	// ... the output follows the command directly, unshaded, and a yank of it drops the gutter
@@ -129,7 +129,7 @@ func TestExpandedToolOutputHangsUnderItsCommandBehindAGutter(t *testing.T) {
 
 func renderedTexts(store *Store, width int) []string {
 	var texts []string
-	for _, line := range store.render(width) {
+	for _, line := range store.render(0, width) {
 		texts = append(texts, lineText(line))
 	}
 	return texts
@@ -146,7 +146,7 @@ func TestCollapsedOutputShowsItsLastLinesUnderACountOfTheRest(t *testing.T) {
 
 	// when
 	// ... the transcript is rendered
-	lines := store.render(30)
+	lines := store.render(0, 30)
 
 	// then
 	// ... the long one shows its last four lines under a count, the short one shows whole, both dimmed and indented
@@ -175,7 +175,7 @@ func TestCollapsedSkillContentShowsOnlyItsSize(t *testing.T) {
 	// when
 	// ... the transcript is rendered collapsed, then expanded
 	collapsed := renderedTexts(store, 40)
-	store.setAllFolds(true)
+	store.setAllFolds(0, true)
 	expanded := renderedTexts(store, 40)
 
 	// then
@@ -232,8 +232,8 @@ func TestYankKeepsBlankLinesInsideExpandedOutput(t *testing.T) {
 	store := NewStore()
 	store.Show(0, core.ToolStarted{ID: "1", Name: "shell", Summary: "printf"})
 	store.Show(0, core.ToolFinished{ID: "1", Output: "a\n\nb"})
-	store.setAllFolds(true)
-	lines := store.render(30)
+	store.setAllFolds(0, true)
+	lines := store.render(0, 30)
 
 	// when
 	// ... the output is yanked
@@ -386,7 +386,7 @@ func TestAChildsLineIsRedrawnWhenItsCountChangesButItsLengthDoesNot(t *testing.T
 	store := NewStore()
 	store.Show(0, core.ChildStarted{Child: 1, Model: "anthropic/sonnet"})
 	store.Show(0, core.ChildProgress{Child: 1, Tools: 2})
-	store.render(60)
+	store.render(0, 60)
 
 	// when
 	// ... it makes a third tool call
@@ -489,7 +489,79 @@ func TestAnAgentCallShowsOnlyItsChildsStatusLine(t *testing.T) {
 		{entryOutput, "a"},
 		{entryInfo, "agent 1 · anthropic/sonnet · 0 tools · finished"},
 	}
-	if got := shownEntries(store); !slices.Equal(got, want) {
+	if got := shownEntries(store, 0); !slices.Equal(got, want) {
 		t.Errorf("entries %v\nwant %v", got, want)
+	}
+}
+
+func TestAChildsTurnEventsGoToItsBufferAndNotTheParents(t *testing.T) {
+	// given
+	// ... a parent that has replied and started a child
+	store := NewStore()
+	store.Show(0, core.ReplyStarted{})
+	store.Show(0, core.ReplyText{Text: "Handing over."})
+	store.Show(0, core.ChildStarted{Child: 1, Model: "anthropic/sonnet"})
+
+	// when
+	// ... the child replies, runs a tool and is discarded, while the parent replies again
+	store.Show(1, core.ReplyStarted{})
+	store.Show(1, core.ReplyText{Text: "Look"})
+	store.Show(0, core.ReplyStarted{})
+	store.Show(1, core.ReplyText{Text: "ing."})
+	store.Show(0, core.ReplyText{Text: "Meanwhile."})
+	store.Show(1, core.ToolStarted{ID: "1", Name: "shell", Summary: "ls"})
+	store.Show(1, core.ToolFinished{ID: "1", Output: "a.go"})
+	store.Show(1, core.TurnDiscarded{Reason: "boom"})
+	store.Show(0, core.ChildFailed{Child: 1, Reason: "boom"})
+
+	// then
+	// ... the child's buffer holds its events, and the parent's its own and the status line
+	wantChild := []shownEntry{
+		{entryReply, "Looking."},
+		{entryCommand, "ls"},
+		{entryOutput, "a.go"},
+		{entryError, "boom (turn discarded)"},
+	}
+	if got := shownEntries(store, 1); !slices.Equal(got, wantChild) {
+		t.Errorf("child entries %v\nwant %v", got, wantChild)
+	}
+	wantParent := []shownEntry{
+		{entryReply, "Handing over."},
+		{entryInfo, "agent 1 · anthropic/sonnet · 0 tools · failed"},
+		{entryReply, "Meanwhile."},
+	}
+	if got := shownEntries(store, 0); !slices.Equal(got, wantParent) {
+		t.Errorf("parent entries %v\nwant %v", got, wantParent)
+	}
+}
+
+func TestAChildsBufferIsThereFromItsFirstEventAndAfterItEnds(t *testing.T) {
+	ends := map[string]core.Event{
+		"finished":  core.ChildFinished{Child: 1},
+		"failed":    core.ChildFailed{Child: 1, Reason: "boom"},
+		"cancelled": core.ChildCancelled{Child: 1},
+	}
+	for name, end := range ends {
+		// given
+		// ... a child waiting for a slot
+		store := NewStore()
+		store.Show(0, core.ChildWaiting{Child: 1, Model: "anthropic/sonnet"})
+		whileWaiting := store.hasBuffer(1)
+
+		// when
+		// ... it starts, replies and ends
+		store.Show(0, core.ChildStarted{Child: 1, Model: "anthropic/sonnet"})
+		store.Show(1, core.ReplyStarted{})
+		store.Show(1, core.ReplyText{Text: "Done."})
+		store.Show(0, end)
+
+		// then
+		// ... it had a buffer while it waited, and the buffer still holds its reply
+		if !whileWaiting {
+			t.Errorf("%s: no buffer while waiting", name)
+		}
+		if got, want := shownEntries(store, 1), []shownEntry{{entryReply, "Done."}}; !slices.Equal(got, want) {
+			t.Errorf("%s: child entries %v\nwant %v", name, got, want)
+		}
 	}
 }

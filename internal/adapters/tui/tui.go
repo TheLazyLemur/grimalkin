@@ -6,6 +6,7 @@ import (
 	"os/signal"
 	"runtime/debug"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -15,9 +16,17 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+// Agent is the parent agent. RunTurn blocks until the parent's turn ends and
+// Cancel cancels it, with every child it started. StartChildTurn claims a
+// child for a turn the user starts on it: it returns at once, with an error
+// when the child can't take one, and otherwise run, which must be called
+// once and blocks until that turn ends. CancelChild cancels the turn one
+// child is running or waiting to run, whoever started it.
 type Agent interface {
 	RunTurn(prompt string)
 	Cancel()
+	StartChildTurn(number int, prompt string) (run func(), err error)
+	CancelChild(number int)
 }
 
 type Clipboard interface {
@@ -41,12 +50,15 @@ const indexCommand = "/index"
 // indicatorPoll is how often a live indicator is read.
 const indicatorPoll = time.Second
 
-// Run starts the UI and returns when the user quits. repoMap may be nil.
-func Run(agent Agent, store *Store, clipboard Clipboard, modelName string, repoMap RepoMap) (err error) {
+// Run starts the UI and returns when the user quits. modelName is the
+// parent's model and effort as the status bar writes them. childLabels gives
+// the same for every model a child may run on, the parent's included, by the
+// name the core's lifecycle events carry. repoMap may be nil.
+func Run(agent Agent, store *Store, clipboard Clipboard, modelName string, childLabels map[string]string, repoMap RepoMap) (err error) {
 	if agent == nil || store == nil || clipboard == nil {
 		panic("tui ports not wired")
 	}
-	m := newModel(agent, store, clipboard, modelName, repoMap)
+	m := newModel(agent, store, clipboard, modelName, childLabels, repoMap)
 
 	term := uv.DefaultTerminal()
 	scr := term.Screen()
@@ -120,14 +132,17 @@ func present(scr *uv.TerminalScreen, cursor uv.Position, shown bool) error {
 	return scr.Flush()
 }
 
-func newModel(agent Agent, store *Store, clipboard Clipboard, modelName string, repoMap RepoMap) *model {
+func newModel(agent Agent, store *Store, clipboard Clipboard, modelName string, childLabels map[string]string, repoMap RepoMap) *model {
 	m := &model{
-		agent:     agent,
-		store:     store,
-		clipboard: clipboard,
-		modelName: modelName,
-		repoMap:   repoMap,
-		turnDone:  make(chan string, 1),
+		agent:       agent,
+		store:       store,
+		clipboard:   clipboard,
+		modelName:   modelName,
+		childLabels: childLabels,
+		repoMap:     repoMap,
+		turnDone:    make(chan turnEnd, 1),
+		childTurns:  map[int]bool{},
+		hidden:      map[int]bufferView{},
 	}
 	m.editor.reset()
 	return m
@@ -145,22 +160,42 @@ type model struct {
 	store     *Store
 	clipboard Clipboard
 	modelName string
-	repoMap   RepoMap
+	// childLabels is the label of each model a child may run on, by the
+	// name its lifecycle events carry.
+	childLabels map[string]string
+	repoMap     RepoMap
 
 	indicatorText string
 	// indicatorDue fires when a live indicator is to be read again. Nil
 	// while it isn't live.
 	indicatorDue <-chan time.Time
 
-	editor     editor
+	editor editor
+	// shown is the number of the agent whose buffer is on screen. transcript
+	// and lines are that buffer's; show changes it.
+	shown      int
 	transcript transcriptView
-	focus      focus
+	// hidden holds the view of each buffer that has been shown and is not now.
+	hidden map[int]bufferView
+	focus  focus
+	// command is the ex command line, open while typing is set.
+	command struct {
+		typing bool
+		typed  []rune
+	}
+	// listing is whether :ls's list of buffers is over the transcript.
+	listing    bool
 	register   []rune
 	statusNote string
+	// busy is whether the parent's turn is running. childTurns holds the
+	// children running a turn the user started, from Enter until the turn
+	// ends, which is before the core's first event for it and so sooner
+	// than the store knows.
 	busy       bool
+	childTurns map[int]bool
 	quit       bool
-	// turnDone gets a value when a turn ends: what it panicked with, or "".
-	turnDone chan string
+	// turnDone gets a value when a turn the user started ends.
+	turnDone chan turnEnd
 
 	width, height int
 
@@ -168,6 +203,33 @@ type model struct {
 	transcriptHeight int
 	inputRows        []screenLine
 	inputCursor      position
+}
+
+// bufferView is where the user left a buffer: the cursor and scroll, and the
+// lines they index, so the cursor can be put back on the entry it was on
+// after events arrived while the buffer was hidden.
+type bufferView struct {
+	transcript transcriptView
+	lines      []screenLine
+}
+
+// show puts an agent's buffer on screen, as it was left. A buffer shown for
+// the first time starts at its top, or follows its end while the input has
+// focus. A selection ends with the switch; the search pattern goes along.
+func (m *model) show(agent int) {
+	if !m.store.hasBuffer(agent) {
+		panic(fmt.Sprintf("agent %d has no buffer to show", agent))
+	}
+	if agent == m.shown {
+		return
+	}
+	m.transcript.visual, m.transcript.pendingKey, m.transcript.pendingWindowCmd = visualOff, 0, false
+	m.hidden[m.shown] = bufferView{m.transcript, m.lines}
+	next := m.hidden[agent]
+	delete(m.hidden, agent)
+	next.transcript.search = m.transcript.search
+	m.shown, m.transcript, m.lines = agent, next.transcript, next.lines
+	m.layout()
 }
 
 // readIndicator reads the indicator now and, while it is live, again after
@@ -197,13 +259,52 @@ func (m *model) handle(ev uv.Event) {
 	m.layout()
 }
 
-// finishTurn ends the turn runTurn started. A turn that panicked panics again
+// turnEnd is the end of a turn the user started: whose it was, and what it
+// panicked with, or "".
+type turnEnd struct {
+	agent    int
+	panicked string
+}
+
+// finishTurn ends a turn runTurn started. A turn that panicked panics again
 // here, on the UI's goroutine, where Run restores the terminal first.
-func (m *model) finishTurn(panicked string) {
-	if panicked != "" {
-		panic(panicked)
+func (m *model) finishTurn(end turnEnd) {
+	if end.panicked != "" {
+		panic(end.panicked)
 	}
-	m.busy = false
+	if end.agent == parentAgent {
+		m.busy = false
+		return
+	}
+	if !m.childTurns[end.agent] {
+		panic(fmt.Sprintf("agent %d ended a turn the user did not start", end.agent))
+	}
+	delete(m.childTurns, end.agent)
+}
+
+// label is an agent's model and effort, as the status bar and :ls write
+// them. A child on a model with no label was wired wrongly: the composition
+// root gives one for every model the core may run a child on.
+func (m *model) label(agent int) string {
+	if agent == parentAgent {
+		return m.modelName
+	}
+	name := m.store.childModel(agent)
+	label, ok := m.childLabels[name]
+	if !ok {
+		panic(fmt.Sprintf("agent %d runs on %s, which has no label", agent, name))
+	}
+	return label
+}
+
+// shownBusy reports whether the shown agent has a turn: running, or for a
+// child, waiting to run. The input, Enter, Ctrl-C and the status bar's state
+// all go by it.
+func (m *model) shownBusy() bool {
+	if m.shown == parentAgent {
+		return m.busy
+	}
+	return m.childTurns[m.shown] || m.store.childBusy(m.shown)
 }
 
 func (m *model) handleKey(char rune, key keyCode) {
@@ -212,11 +313,17 @@ func (m *model) handleKey(char rune, key keyCode) {
 		m.transcript.visual = visualOff
 	}
 	if key == keyCtrlC {
-		if m.busy {
-			m.agent.Cancel()
-		} else {
-			m.quit = true
-		}
+		m.interrupt()
+		return
+	}
+	if m.command.typing {
+		m.handleCommandKey(char, key)
+		return
+	}
+	// Any key puts the listing away and does nothing else, so a habitual q
+	// can't quit. A colon keeps it, to be read while the next command is typed.
+	if m.listing && char != ':' {
+		m.listing = false
 		return
 	}
 	if m.focus == focusTranscript {
@@ -224,6 +331,90 @@ func (m *model) handleKey(char rune, key keyCode) {
 		return
 	}
 	m.handleInputKey(char, key)
+}
+
+// interrupt is Ctrl-C: it cancels the shown agent's turn, and quits only
+// when no agent has one. The children the parent started run inside its
+// turn, so the parent's turn and the user's turns on children are all there
+// is to check.
+func (m *model) interrupt() {
+	switch {
+	case m.shownBusy() && m.shown == parentAgent:
+		m.agent.Cancel()
+	case m.shownBusy():
+		m.agent.CancelChild(m.shown)
+	case m.busy || len(m.childTurns) > 0:
+		m.statusNote = "other agents are running · :ls to see them"
+	default:
+		m.quit = true
+	}
+}
+
+func (m *model) handleCommandKey(char rune, key keyCode) {
+	c := &m.command
+	switch {
+	case key == keyEsc, key == keyBackspace && len(c.typed) == 0:
+		c.typing, m.listing = false, false
+	case key == keyEnter:
+		c.typing, m.listing = false, false
+		m.runCommand(strings.TrimSpace(string(c.typed)))
+	case key == keyBackspace:
+		c.typed = c.typed[:len(c.typed)-1]
+	case char != 0:
+		c.typed = append(c.typed, char)
+	}
+}
+
+// runCommand runs an ex command: ls lists the buffers and b N shows one.
+// Anything else is an error in the status bar.
+func (m *model) runCommand(command string) {
+	if command == "" {
+		return
+	}
+	if command == "ls" {
+		m.listing = true
+		return
+	}
+	if number, ok := strings.CutPrefix(command, "b"); ok {
+		if agent, err := strconv.Atoi(strings.TrimSpace(number)); err == nil {
+			if !m.store.hasBuffer(agent) {
+				m.statusNote = fmt.Sprintf("no buffer %d", agent)
+				return
+			}
+			m.show(agent)
+			return
+		}
+	}
+	m.statusNote = "not a command: " + command
+}
+
+// listingRows is what :ls shows, under a hairline: the parent as buffer 0,
+// then each child, with its model and state. % marks the shown buffer. It is
+// read from the store on each draw, so states change as they happen. Rows
+// that don't fit the transcript's height are counted on the last one.
+func (m *model) listingRows() []screenLine {
+	row := func(agent int, model, state string) screenLine {
+		mark := " "
+		if agent == m.shown {
+			mark = "%"
+		}
+		return screenLine{cells: styledCells(fmt.Sprintf("%s %d · %s · %s", mark, agent, model, state), colorInfo, 0)}
+	}
+	state := "ready"
+	if m.busy {
+		state = childRunning
+	}
+	rows := []screenLine{
+		{cells: styledCells(strings.Repeat("─", m.contentWidth()), colorFaint, 0)},
+		row(parentAgent, m.label(parentAgent), state),
+	}
+	for _, child := range m.store.childBuffers() {
+		rows = append(rows, row(child.number, m.label(child.number), child.state))
+	}
+	if extra := len(rows) - m.transcriptHeight; extra > 0 {
+		rows = append(rows[:m.transcriptHeight-1], screenLine{cells: styledCells(fmt.Sprintf("··· %d more", extra+1), colorFaint, 0)})
+	}
+	return rows
 }
 
 func (m *model) handleTranscriptKey(char rune, key keyCode) {
@@ -241,6 +432,13 @@ func (m *model) handleTranscriptKey(char rune, key keyCode) {
 		m.statusNote = fmt.Sprintf("yanked %d chars", len(m.register))
 	case viewQuit:
 		m.quit = true
+	case viewCommand:
+		m.command.typing, m.command.typed = true, nil
+	case viewGoToFile:
+		// A status line stands for its child's buffer, as a path does a file.
+		if owner := m.lines[m.transcript.cursor.line].owner; owner != nil && owner.child != 0 {
+			m.show(owner.child)
+		}
 	case viewToggleFold:
 		if len(m.lines) > 0 {
 			if fold := m.lines[m.transcript.cursor.line].fold; fold != nil {
@@ -248,9 +446,9 @@ func (m *model) handleTranscriptKey(char rune, key keyCode) {
 			}
 		}
 	case viewExpandAll:
-		m.refold(func() { m.store.setAllFolds(true) })
+		m.refold(func() { m.store.setAllFolds(m.shown, true) })
 	case viewCollapseAll:
-		m.refold(func() { m.store.setAllFolds(false) })
+		m.refold(func() { m.store.setAllFolds(m.shown, false) })
 	}
 }
 
@@ -269,7 +467,7 @@ func (m *model) refold(change func()) {
 	inside := m.lines[cursor].owner == anchor && anchor != nil
 
 	change()
-	m.lines = m.store.render(m.contentWidth())
+	m.lines = m.store.render(m.shown, m.contentWidth())
 	if anchor == nil {
 		m.transcript.clampAndScroll(m.lines, m.transcriptHeight)
 		return
@@ -382,42 +580,56 @@ func (m *model) atBottom() bool {
 }
 
 func (m *model) send() {
-	if len(m.editor.text) == 0 || m.busy {
+	if len(m.editor.text) == 0 || m.shownBusy() {
 		return
 	}
 	prompt := string(m.editor.text)
+	run := func() { m.agent.RunTurn(prompt) }
+	switch {
+	case strings.TrimSpace(prompt) == indexCommand:
+		run = nil
+	case m.shown != parentAgent:
+		var err error
+		if run, err = m.agent.StartChildTurn(m.shown, prompt); err != nil {
+			m.statusNote = err.Error()
+			return
+		}
+		m.childTurns[m.shown] = true
+	default:
+		m.busy = true
+	}
 	// Sending goes back to the bottom, wherever the transcript was left.
 	m.transcript.scrollTop = len(m.lines)
-	if strings.TrimSpace(prompt) == indexCommand {
-		m.editor.reset()
+	m.editor.reset()
+	if run == nil {
 		m.index()
 		return
 	}
-	m.editor.reset()
-	m.store.addUser(prompt)
-	m.busy = true
-	go m.runTurn(prompt)
+	m.store.addUser(m.shown, prompt)
+	go m.runTurn(m.shown, run)
 }
 
-// runTurn runs a turn on its own goroutine and reports its end on turnDone.
-func (m *model) runTurn(prompt string) {
-	panicked := ""
+// runTurn runs an agent's turn on its own goroutine and reports its end on
+// turnDone.
+func (m *model) runTurn(agent int, run func()) {
+	end := turnEnd{agent: agent}
 	defer func() {
 		if r := recover(); r != nil {
-			panicked = fmt.Sprintf("turn panicked: %v\n\n%s", r, debug.Stack())
+			end.panicked = fmt.Sprintf("turn panicked: %v\n\n%s", r, debug.Stack())
 		}
-		m.turnDone <- panicked
+		m.turnDone <- end
 	}()
-	m.agent.RunTurn(prompt)
+	run()
 }
 
-// index builds the repo map and starts following its progress.
+// index builds the repo map and starts following its progress. Its line goes
+// in the shown buffer, where the user typed the command.
 func (m *model) index() {
 	if m.repoMap == nil {
-		m.store.AddInfo(`index: there is no repo map · set "map": true in the config's search block`)
+		m.store.addInfo(m.shown, `index: there is no repo map · set "map": true in the config's search block`)
 		return
 	}
-	m.store.AddInfo(m.repoMap.Index())
+	m.store.addInfo(m.shown, m.repoMap.Index())
 	m.readIndicator()
 }
 
@@ -448,12 +660,12 @@ func (m *model) contentWidth() int {
 func (m *model) layout() {
 	follow := m.focus == focusInput && m.atBottom()
 	m.inputRows, m.inputCursor = layoutInput(&m.editor, m.contentWidth(), max(1, m.height/3))
-	if m.transcript.search.typing {
+	if m.transcript.search.typing || m.command.typing {
 		m.inputRows = m.inputRows[:1]
 	}
 	m.transcriptHeight = max(1, m.height-1-len(m.inputRows)-m.topPadding())
 	old := m.lines
-	m.lines = m.store.render(m.contentWidth())
+	m.lines = m.store.render(m.shown, m.contentWidth())
 	// A tool's result goes in under its command, which can be above the
 	// cursor: keep the cursor, the selection and the view on what they were on.
 	m.transcript.cursor.line = movedLine(old, m.lines, m.transcript.cursor.line)
@@ -535,17 +747,27 @@ func (m *model) draw(scr uv.Screen) (cursor uv.Position, shown bool) {
 	left, top := m.margin(), m.topPadding()
 	m.drawTranscript(scr, top)
 	inputTop := top + m.transcriptHeight
+	if m.listing {
+		rows := m.listingRows()
+		for i, row := range rows {
+			y := inputTop - len(rows) + i
+			screen.ClearArea(scr, uv.Rect(0, y, m.width, 1))
+			m.drawLine(scr, y, row)
+		}
+	}
 	m.drawLine(scr, inputTop, m.statusBar())
 	inputTop++
 
-	if m.transcript.search.typing {
-		prompt := m.searchPrompt()
+	if m.transcript.search.typing || m.command.typing {
+		prompt := m.promptLine()
 		m.drawLine(scr, inputTop, prompt)
 		return uv.Pos(left+cellsWidth(prompt.cells), inputTop), true
 	}
 
 	m.drawInput(scr, inputTop)
 	switch {
+	case m.listing:
+		// The listing may cover the transcript's cursor.
 	case m.focus == focusInput:
 		return uv.Pos(left+m.inputCursor.col, inputTop+m.inputCursor.line), true
 	case len(m.lines) > 0:
@@ -614,14 +836,15 @@ func (m *model) statusBar() screenLine {
 	}
 
 	width := m.contentWidth()
+	busy := m.shownBusy()
 	state, stateColor := "ready", colorDim
-	if m.busy {
+	if busy {
 		state, stateColor = "working · ctrl-c to stop", colorBusy
 	}
 	// Reserve the mode and activity before giving room to notes or the model.
 	// Compact labels keep the activity visible even at the minimum width.
 	budget := width - len(mode) - 2
-	if m.busy {
+	if busy {
 		for _, compact := range []string{"working · ctrl-c", "working", "run"} {
 			if ansi.StringWidth(state) <= budget {
 				break
@@ -652,8 +875,9 @@ func (m *model) statusBar() screenLine {
 	if cellsWidth(left)+cellsWidth(right) < width {
 		left = append(left, cell{' ', 0, 0})
 	}
-	modelLabel := styledCells(" "+m.modelName+" ", colorDim, 0)
-	if m.modelName != "" && cellsWidth(left)+cellsWidth(modelLabel)+cellsWidth(right) < width {
+	shownLabel := m.label(m.shown)
+	modelLabel := styledCells(" "+shownLabel+" ", colorDim, 0)
+	if shownLabel != "" && cellsWidth(left)+cellsWidth(modelLabel)+cellsWidth(right) < width {
 		right = append(modelLabel, right...)
 	}
 	// Background state goes last: it is the first thing dropped for room.
@@ -669,13 +893,17 @@ func (m *model) statusBar() screenLine {
 	return screenLine{cells: bar}
 }
 
-func (m *model) searchPrompt() screenLine {
-	prompt := '/'
-	if m.transcript.search.typedBackward {
+// promptLine is the search or command line being typed, in place of the input.
+func (m *model) promptLine() screenLine {
+	prompt, text := '/', m.transcript.search.typed
+	switch {
+	case m.command.typing:
+		prompt, text = ':', m.command.typed
+	case m.transcript.search.typedBackward:
 		prompt = '?'
 	}
 	cells := []cell{{prompt, colorUser | attrBold, 0}}
-	typed := styledCells(string(m.transcript.search.typed), 0, 0)
+	typed := styledCells(string(text), 0, 0)
 	// Keep the prompt and the insertion cursor visible as the query grows.
 	remaining := cellsWidth(typed)
 	for len(typed) > 0 && remaining > m.contentWidth()-2 {

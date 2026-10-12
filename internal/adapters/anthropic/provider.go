@@ -153,9 +153,13 @@ func (p *Provider) buildParams(req core.ModelRequest) anthropic.MessageNewParams
 				params.Messages = append(params.Messages, anthropic.NewUserMessage(anthropic.NewTextBlock(m.Text)))
 				continue
 			}
+			// Results first: the API wants a call's result before any text.
 			blocks := make([]anthropic.ContentBlockParamUnion, len(m.ToolResults))
 			for i, r := range m.ToolResults {
 				blocks[i] = anthropic.NewToolResultBlock(r.ToolUseID, r.Content, r.IsError)
+			}
+			if m.Text != "" {
+				blocks = append(blocks, anthropic.NewTextBlock(m.Text))
 			}
 			params.Messages = append(params.Messages, anthropic.NewUserMessage(blocks...))
 		}

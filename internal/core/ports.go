@@ -33,6 +33,9 @@ type ToolResult struct {
 	IsError   bool
 }
 
+// Message is one message of a conversation. A user message has Text,
+// ToolResults, or both, and then the results come before the text; an
+// assistant message has only Content, the provider's own form of it.
 type Message struct {
 	Role        Role
 	Text        string

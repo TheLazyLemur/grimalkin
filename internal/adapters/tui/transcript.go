@@ -34,22 +34,42 @@ type entry struct {
 	expanded bool
 	hideAll  bool
 
+	// child is the number of the child a status line is about, which gf
+	// opens. Zero on every other entry.
+	child int
+
 	lines            []screenLine
 	renderedLen      int
 	renderedWidth    int
 	renderedExpanded bool
 }
 
+// Store holds one transcript per agent, its buffer, by agent number. The
+// parent's is there from the start; a child's from the first event that names
+// the child, for the rest of the session.
 type Store struct {
 	mu      sync.Mutex
+	buffers map[int]*buffer
+	// children holds each child's latest status line, by child number. The
+	// lines themselves are entries in the parent's buffer.
+	children map[int]*childStatus
+	changed  chan struct{}
+}
+
+// parentAgent is the number the core gives the parent.
+const parentAgent = 0
+
+// buffer is one agent's transcript.
+type buffer struct {
 	entries []*entry
 	reply   *entry
 	// running holds the tool calls that have started and not finished, by
 	// call ID, so each result lands under its own command.
 	running map[string]runningCall
-	// children holds each child's latest status line, by child number.
-	children map[int]*childStatus
-	changed  chan struct{}
+}
+
+func newBuffer() *buffer {
+	return &buffer{running: map[string]runningCall{}}
 }
 
 type runningCall struct {
@@ -64,48 +84,68 @@ type runningCall struct {
 func NewStore() *Store {
 	return &Store{
 		changed:  make(chan struct{}, 1),
-		running:  map[string]runningCall{},
+		buffers:  map[int]*buffer{parentAgent: newBuffer()},
 		children: map[int]*childStatus{},
 	}
 }
 
-func (s *Store) AddInfo(text string) {
-	s.add(entryInfo, text)
-	s.notify()
+// hasBuffer reports whether an agent has a buffer to show.
+func (s *Store) hasBuffer(agent int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buffers[agent] != nil
 }
 
-func (s *Store) addUser(prompt string) {
-	s.add(entryUser, prompt)
-	s.notify()
-}
-
-func (s *Store) Show(agent int, event core.Event) {
-	// Only the parent's events are shown until each agent has a buffer.
-	if agent != 0 {
-		return
+// buffer is an agent's buffer, which must exist. The caller holds the lock.
+func (s *Store) buffer(agent int) *buffer {
+	b := s.buffers[agent]
+	if b == nil {
+		panic(fmt.Sprintf("agent %d has no buffer", agent))
 	}
+	return b
+}
+
+// AddInfo adds a line of grimalkin's own to the parent's buffer.
+func (s *Store) AddInfo(text string) {
+	s.addInfo(parentAgent, text)
+}
+
+// addInfo adds a line of grimalkin's own to an agent's buffer.
+func (s *Store) addInfo(agent int, text string) {
+	s.add(agent, &entry{kind: entryInfo}, text)
+	s.notify()
+}
+
+// addUser adds what the user sent an agent to its buffer.
+func (s *Store) addUser(agent int, prompt string) {
+	s.add(agent, &entry{kind: entryUser}, prompt)
+	s.notify()
+}
+
+// Show puts a turn event in its agent's buffer. A child's lifecycle events
+// are the parent's: they draw the child's status line in the parent's buffer.
+func (s *Store) Show(agent int, event core.Event) {
 	switch event := event.(type) {
 	case core.ReplyStarted:
-		s.add(entryReply, "")
-		s.mu.Lock()
-		s.reply = s.entries[len(s.entries)-1]
-		s.mu.Unlock()
+		s.startReply(agent)
 	case core.ReplyText:
 		s.mu.Lock()
-		if s.reply == nil {
+		b := s.buffer(agent)
+		if b.reply == nil {
 			panic("reply text before ReplyStarted")
 		}
-		s.reply.text.WriteString(event.Text)
+		b.reply.text.WriteString(event.Text)
 		s.mu.Unlock()
 	case core.ToolStarted:
-		s.startCall(event)
+		s.startCall(agent, event)
 	case core.ToolFinished:
-		s.finishCall(event)
+		s.finishCall(agent, event)
 	case core.SkillLoaded:
-		s.add(entryCommand, "skill "+event.Name)
-		s.addHidden(event.Content)
+		s.add(agent, &entry{kind: entryCommand}, "skill "+event.Name)
+		// Skill content collapses to its line count alone.
+		s.add(agent, &entry{kind: entryOutput, hideAll: true}, event.Content)
 	case core.TurnDiscarded:
-		s.add(entryError, event.Reason+" (turn discarded)")
+		s.add(agent, &entry{kind: entryError}, event.Reason+" (turn discarded)")
 	case core.ChildWaiting:
 		s.beginChild(event.Child, event.Model, childWaiting)
 	case core.ChildStarted:
@@ -127,34 +167,36 @@ func (s *Store) Show(agent int, event core.Event) {
 
 // startCall adds a tool call's command and records the call as running, in
 // one step: calls can start at once, and each must record its own command.
-func (s *Store) startCall(event core.ToolStarted) {
+func (s *Store) startCall(agent int, event core.ToolStarted) {
 	command := &entry{kind: entryCommand}
 	command.text.WriteString(event.Summary)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.running[event.ID]; ok {
+	b := s.buffer(agent)
+	if _, ok := b.running[event.ID]; ok {
 		panic(fmt.Sprintf("tool call %q started twice", event.ID))
 	}
 	if event.Name == core.AgentToolName {
-		s.running[event.ID] = runningCall{}
+		b.running[event.ID] = runningCall{}
 		return
 	}
-	s.entries = append(s.entries, command)
-	s.running[event.ID] = runningCall{command: command, skill: event.Name == core.SkillToolName}
+	b.entries = append(b.entries, command)
+	b.running[event.ID] = runningCall{command: command, skill: event.Name == core.SkillToolName}
 }
 
 // finishCall puts a tool call's result under its command rather than at the
 // end, since calls run at once finish in any order.
-func (s *Store) finishCall(event core.ToolFinished) {
+func (s *Store) finishCall(agent int, event core.ToolFinished) {
 	result := &entry{kind: entryOutput}
 	result.text.WriteString(event.Output)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	call, ok := s.running[event.ID]
+	b := s.buffer(agent)
+	call, ok := b.running[event.ID]
 	if !ok {
 		panic(fmt.Sprintf("tool call %q finished without starting", event.ID))
 	}
-	delete(s.running, event.ID)
+	delete(b.running, event.ID)
 	if call.command == nil {
 		return
 	}
@@ -164,7 +206,7 @@ func (s *Store) finishCall(event core.ToolFinished) {
 	case call.skill:
 		result.hideAll = true
 	}
-	s.entries = slices.Insert(s.entries, slices.Index(s.entries, call.command)+1, result)
+	b.entries = slices.Insert(b.entries, slices.Index(b.entries, call.command)+1, result)
 }
 
 const (
@@ -190,6 +232,45 @@ func (c *childStatus) ended() bool {
 	return c.state != childWaiting && c.state != childRunning
 }
 
+// childBuffer is a child's buffer as :ls lists it: the child's number, and
+// the model and state of its latest run.
+type childBuffer struct {
+	number       int
+	model, state string
+}
+
+// childBuffers lists every child's buffer, by number.
+func (s *Store) childBuffers() []childBuffer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var list []childBuffer
+	for _, child := range s.children {
+		list = append(list, childBuffer{child.number, child.model, child.state})
+	}
+	slices.SortFunc(list, func(a, b childBuffer) int { return a.number - b.number })
+	return list
+}
+
+// childModel is the model a child runs on, as its lifecycle events name it.
+func (s *Store) childModel(number int) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	child := s.children[number]
+	if child == nil {
+		panic(fmt.Sprintf("no child %d", number))
+	}
+	return child.model
+}
+
+// childBusy reports whether a child is waiting or running, going by its
+// lifecycle events.
+func (s *Store) childBusy(number int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	child := s.children[number]
+	return child != nil && !child.ended()
+}
+
 // redraw rewrites the line in place. The entry's rendering is dropped by
 // hand, since a new count can leave the text the same length.
 func (c *childStatus) redraw() {
@@ -204,7 +285,8 @@ func (c *childStatus) redraw() {
 
 // beginChild shows a child as waiting or running. A waiting child that gets
 // a slot keeps its line; a child run again after it ended gets a new one, so
-// the earlier run stays as it ended.
+// the earlier run stays as it ended. The child's buffer is made here, on the
+// first event that names it.
 func (s *Store) beginChild(number int, model, state string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -212,9 +294,13 @@ func (s *Store) beginChild(number int, model, state string) {
 	switch {
 	case child != nil && child.state == childWaiting && state == childRunning:
 	case child == nil || child.ended():
-		child = &childStatus{line: &entry{kind: entryInfo}, number: number}
+		child = &childStatus{line: &entry{kind: entryInfo, child: number}, number: number}
 		s.children[number] = child
-		s.entries = append(s.entries, child.line)
+		parent := s.buffer(parentAgent)
+		parent.entries = append(parent.entries, child.line)
+		if s.buffers[number] == nil {
+			s.buffers[number] = newBuffer()
+		}
 	default:
 		panic(fmt.Sprintf("child %d is %s while already %s", number, state, child.state))
 	}
@@ -244,20 +330,23 @@ func (s *Store) endChild(number int, state string) {
 	child.redraw()
 }
 
-func (s *Store) add(kind entryKind, text string) {
-	s.addEntry(&entry{kind: kind}, text)
-}
-
-// addHidden adds skill content, which collapses to its line count alone.
-func (s *Store) addHidden(text string) {
-	s.addEntry(&entry{kind: entryOutput, hideAll: true}, text)
-}
-
-func (s *Store) addEntry(e *entry, text string) {
+// add puts an entry at the end of an agent's buffer.
+func (s *Store) add(agent int, e *entry, text string) {
 	e.text.WriteString(text)
 	s.mu.Lock()
-	s.entries = append(s.entries, e)
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+	b := s.buffer(agent)
+	b.entries = append(b.entries, e)
+}
+
+// startReply adds a reply and makes it the one the agent's text goes to, in
+// one step: agents reply at the same time.
+func (s *Store) startReply(agent int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b := s.buffer(agent)
+	b.reply = &entry{kind: entryReply}
+	b.entries = append(b.entries, b.reply)
 }
 
 func (s *Store) notify() {
@@ -274,10 +363,10 @@ func (s *Store) toggleFold(e *entry) {
 	s.mu.Unlock()
 }
 
-// setAllFolds expands or collapses every output entry.
-func (s *Store) setAllFolds(expanded bool) {
+// setAllFolds expands or collapses every output entry in an agent's buffer.
+func (s *Store) setAllFolds(agent int, expanded bool) {
 	s.mu.Lock()
-	for _, e := range s.entries {
+	for _, e := range s.buffer(agent).entries {
 		if e.kind == entryOutput {
 			e.expanded = expanded
 		}
@@ -285,11 +374,13 @@ func (s *Store) setAllFolds(expanded bool) {
 	s.mu.Unlock()
 }
 
-func (s *Store) render(width int) (lines []screenLine) {
+// render lays an agent's buffer out as screen lines.
+func (s *Store) render(agent int, width int) (lines []screenLine) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	entries := s.buffer(agent).entries
 	turnSeen := false
-	for i, e := range s.entries {
+	for i, e := range entries {
 		if e.text.Len() == 0 {
 			continue
 		}
@@ -307,8 +398,8 @@ func (s *Store) render(width int) (lines []screenLine) {
 		switch {
 		case e.kind == entryOutput:
 			fold = e
-		case e.kind == entryCommand && i+1 < len(s.entries) && s.entries[i+1].kind == entryOutput:
-			fold = s.entries[i+1]
+		case e.kind == entryCommand && i+1 < len(entries) && entries[i+1].kind == entryOutput:
+			fold = entries[i+1]
 		}
 		first := len(lines)
 		lines = append(lines, e.lines...)
@@ -320,7 +411,7 @@ func (s *Store) render(width int) (lines []screenLine) {
 		}
 		// A command draws no trailing blank so its output can hang under it;
 		// when nothing will, the blank goes here instead.
-		if e.kind == entryCommand && !followedByResult(s.entries, i) {
+		if e.kind == entryCommand && !followedByResult(entries, i) {
 			lines = append(lines, screenLine{owner: e, fold: fold})
 		}
 	}
