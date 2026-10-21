@@ -7,13 +7,22 @@ works with Claude or any compatible endpoint (e.g. Ollama). It renders with
 Ultraviolet and has a shell, [search](#search), [web](#web) tools,
 [skills](#skills) and [subagents](#subagents).
 
+The client can offer its own tools too: a `session/new` or `session/load`
+`mcpServers` entry of `type: "acp"` is an MCP server the client answers over
+the ACP connection itself (the draft in acp-go-sdk v0.13.5: `mcp/connect`,
+then `mcp/message`). Its tools are listed before the session starts and
+offered to the model beside grimalkin's own, each behind the same permission
+request. A tool named like one of grimalkin's, or like another of the
+client's, fails the session start. Servers of other types (stdio, http, sse)
+are not supported and are ignored, with a note on stderr.
+
 > **Warning:** the shell is **unsandboxed**. Every command the model chooses
 > runs as `/bin/sh -c` in the current directory, with your permissions and no
 > timeout.
 
 **Contents:** [Quick start](#quick-start) ·
 [Configuration](#configuration) · [Search](#search) · [Web](#web) ·
-[Skills](#skills) · [Subagents](#subagents) · [Keys](#keys)
+[Skills](#skills) · [Subagents](#subagents) · [ACP](#acp) · [Keys](#keys)
 
 Working on grimalkin itself? See [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -84,7 +93,9 @@ status bar shows `effort n/a`.
 
 A key command runs once at startup, only for the selected provider and any
 provider a [`subagents`](#subagents) entry names, and can prompt in the
-terminal. grimalkin ignores `ANTHROPIC_*` environment variables.
+terminal. Under [`grimalkin acp`](#acp) only the selected provider's runs at
+startup; another's runs the first time one of its models is picked, once per
+process. grimalkin ignores `ANTHROPIC_*` environment variables.
 
 What to put where:
 
@@ -300,6 +311,64 @@ In the session's buffer, `Ctrl-C` stops the turn and every subagent it started.
 > **Warning:** a subagent's shell is the same **unsandboxed** shell, and its
 > commands do not appear in the session's transcript, only the count of them:
 > open its buffer to see them.
+
+## ACP
+
+`grimalkin acp` runs grimalkin as an [Agent Client Protocol](https://agentclientprotocol.com)
+agent on stdin and stdout instead of the TUI, from the same config. It is
+work in progress: one session per process, and one turn at a time.
+Reply text streams as `agent_message_chunk` updates. `session/cancel` stops a
+turn, and a turn that fails answers `session/prompt` with an error.
+`_session/steering` (as claude-agent-acp and codex-acp have it, advertised in
+`initialize`'s `_meta.steering`) sends a message during a turn: it answers
+`injected`, and the model reads it after the current tool round, or, if the
+turn ends or is cancelled first, with your next prompt. With no turn running
+it answers `promptRequired` and starts nothing.
+
+The model gets the same tools as in the TUI (the shell, and search, web and
+skills when configured) but never the `agent` tool. Each call is announced
+as a `tool_call` update (`kind`, `rawInput`, and the tool's name in
+`_meta.toolName`) and then waits on a `session/request_permission` to the
+client, with `allow_once` and `reject_once` options. Only the client's
+allow runs it; a denial, an error or a cancel does not, and the model gets
+a denial as an error result. The call then goes `in_progress` and ends in a
+`tool_call_update` that is `completed` or `failed`, with the output.
+
+> **Warning:** the shell is **unsandboxed**, and the client's answers are
+> all that stand between the model and it. A client that approves every
+> request gives the model your shell.
+
+Each session is saved as it goes, to
+`$XDG_STATE_HOME/grimalkin/sessions/<sessionId>.jsonl` (by default
+`~/.local/state/grimalkin/sessions/`), readable by you alone since it holds
+the whole conversation. `session/load` with that id, in a new process,
+replays the session's finished turns (prompts, replies, tool calls and steers) and
+continues it; a session file whose last line is torn, from a process that
+died mid-write, loads without that line; a cancelled or failed turn is neither replayed nor remembered, except for its steers. If a
+write fails, the error goes to stderr and every later prompt is refused, as
+the session could no longer be resumed.
+
+`session/new` and `session/load` answer with two config options. `model`
+lists every model in the config as `provider/model`, each with its efforts,
+lowest first, in `_meta.efforts` (`[]` when it has none); `thought_level`
+lists the current model's efforts, and is left out when it has none. A
+session starts on the config's `provider`, `model` and `effort`.
+`session/set_config_option` switches either from the next turn on (a running
+turn finishes on its model) and answers with the options as they now are.
+A new model keeps the effort if it lists it, else takes the next higher one
+it lists, going up the old model's `efforts`, else its own highest. The
+first pick of a model on another provider runs that provider's key command;
+if it fails, the answer is an error carrying the command's stderr and the
+session stays where it was. The choice is saved with the session and
+restored by `session/load`; if the saved model is no longer in the config
+or its key command fails, the load goes on with the config's model and says
+why on stderr.
+
+`session/close` (advertised as `sessionCapabilities.close`) cancels a running
+turn and ends the session; a session that never ran a turn has its file
+deleted. The other capabilities are not advertised yet. stdout carries
+protocol messages only; errors go to stderr. Key commands run with no stdin,
+so one that prompts fails, and with their stderr captured for the error.
 
 ## Keys
 

@@ -24,8 +24,10 @@ type fakeAgent struct {
 	refuse error
 }
 
-func (f *fakeAgent) RunTurn(prompt string) { f.prompts = append(f.prompts, prompt) }
-func (f *fakeAgent) Cancel()               { f.cancelled++ }
+func (f *fakeAgent) StartTurn(prompt string) func() {
+	return func() { f.prompts = append(f.prompts, prompt) }
+}
+func (f *fakeAgent) Cancel() { f.cancelled++ }
 func (f *fakeAgent) CancelChild(number int) {
 	f.childCancelled = append(f.childCancelled, number)
 }

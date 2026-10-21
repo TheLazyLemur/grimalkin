@@ -2,8 +2,10 @@ package anthropic
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -61,7 +63,11 @@ func thinking(value string) anthropic.ThinkingConfigParamUnion {
 }
 
 func (p *Provider) Stream(ctx context.Context, req core.ModelRequest, onText func(string)) (core.ModelResponse, error) {
-	stream := p.client.Messages.NewStreaming(ctx, p.buildParams(req))
+	params, err := p.buildParams(req)
+	if err != nil {
+		return core.ModelResponse{}, err
+	}
+	stream := p.client.Messages.NewStreaming(ctx, params)
 	defer stream.Close()
 
 	msg := anthropic.Message{}
@@ -93,11 +99,15 @@ func (p *Provider) Stream(ctx context.Context, req core.ModelRequest, onText fun
 			calls = append(calls, core.ToolCall{ID: block.ID, Name: block.Name, Input: block.Input})
 		}
 	}
+	content, err := json.Marshal(msg.ToParam())
+	if err != nil {
+		return core.ModelResponse{}, fmt.Errorf("encode response: %w", err)
+	}
 	return core.ModelResponse{
 		StopReason: stopReason(msg.StopReason),
 		StopDetail: string(msg.StopReason),
 		ToolCalls:  calls,
-		Content:    msg.ToParam(),
+		Content:    content,
 	}, nil
 }
 
@@ -112,7 +122,9 @@ func stopReason(r anthropic.StopReason) core.StopReason {
 	}
 }
 
-func (p *Provider) buildParams(req core.ModelRequest) anthropic.MessageNewParams {
+// buildParams fails only on assistant content that isn't this adapter's
+// MessageParam, which a saved conversation can hold.
+func (p *Provider) buildParams(req core.ModelRequest) (anthropic.MessageNewParams, error) {
 	// Two cache breakpoints, set on blocks with a 1h TTL as Claude Code does:
 	// a proxy cloaking requests as Claude Code adds its own 1h breakpoints, and
 	// the API rejects a block whose breakpoints disagree on TTL. The system
@@ -136,16 +148,25 @@ func (p *Provider) buildParams(req core.ModelRequest) anthropic.MessageNewParams
 		params.Tools = append(params.Tools, anthropic.ToolUnionParam{OfTool: &anthropic.ToolParam{
 			Name:        tool.Name,
 			Description: anthropic.String(tool.Description),
-			Strict:      anthropic.Bool(true),
+			Strict:      anthropic.Bool(!tool.NonStrict),
 			InputSchema: schema,
 		}})
 	}
-	for _, m := range req.Messages {
+	for i, m := range req.Messages {
 		switch m.Role {
 		case core.RoleAssistant:
-			content, ok := m.Content.(anthropic.MessageParam)
-			if !ok {
-				panic(fmt.Sprintf("assistant message content is %T, not this adapter's", m.Content))
+			var content anthropic.MessageParam
+			if err := json.Unmarshal(m.Content, &content); err != nil {
+				return params, fmt.Errorf("message %d: assistant content: %w", i, err)
+			}
+			if content.Role != anthropic.MessageParamRoleAssistant {
+				return params, fmt.Errorf("message %d: assistant content has role %q", i, content.Role)
+			}
+			if m.Model != req.Model {
+				// Another model's signatures, or those of a model no one named, can't be verified here.
+				content.Content = slices.DeleteFunc(content.Content, func(b anthropic.ContentBlockParamUnion) bool {
+					return b.OfThinking != nil || b.OfRedactedThinking != nil
+				})
 			}
 			params.Messages = append(params.Messages, content)
 		case core.RoleUser:
@@ -169,7 +190,7 @@ func (p *Provider) buildParams(req core.ModelRequest) anthropic.MessageNewParams
 	}
 	last := params.Messages[len(params.Messages)-1].Content
 	*last[len(last)-1].GetCacheControl() = cacheControl()
-	return params
+	return params, nil
 }
 
 func cacheControl() anthropic.CacheControlEphemeralParam {

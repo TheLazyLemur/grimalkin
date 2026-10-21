@@ -316,7 +316,7 @@ func (a *Agent) CancelChild(number int) {
 
 func (a *Agent) runAgentCall(ctx context.Context, call ToolCall, claim childClaim) ToolResult {
 	// The cap is applied to the child's reply, below its number.
-	return a.runCall(call, AgentToolName+" "+string(call.Input), 0, func() (string, error) {
+	return a.runCall(ctx, call, AgentToolName+" "+string(call.Input), 0, func() (string, error) {
 		if claim.err != nil {
 			return "", claim.err
 		}

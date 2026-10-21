@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"grimalkin/internal/adapters/acp"
+	"grimalkin/internal/adapters/skills"
 	"grimalkin/internal/config"
 	"grimalkin/internal/core"
 )
@@ -73,5 +75,49 @@ func TestASubagentEntryWhoseWireHasNoAdapterIsAnErrorNamingTheEntry(t *testing.T
 	// ... building fails, naming the entry and its wire
 	if want := `subagents.models[1] (relay/puff): no adapter for wire "smoke-signals"`; err == nil || !strings.Contains(err.Error(), want) {
 		t.Errorf("err = %v, want it to contain %q", err, want)
+	}
+}
+
+// recordingModel is a core.Model that ends the turn at once, recording the
+// request it was sent.
+type recordingModel struct{ req core.ModelRequest }
+
+func (m *recordingModel) Stream(_ context.Context, req core.ModelRequest, _ func(string)) (core.ModelResponse, error) {
+	m.req = req
+	return core.ModelResponse{StopReason: core.StopEndTurn}, nil
+}
+
+type discardTranscript struct{}
+
+func (discardTranscript) Show(int, core.Event) {}
+
+func TestAnACPAgentOffersTheShellAndNeverTheAgentTool(t *testing.T) {
+	// given
+	// ... the agent an ACP session drives, for a config with no search, web or skills
+	model := &recordingModel{}
+	catalogue, _ := toolCatalogue(config.Selection{}, t.TempDir())
+	library, _, err := skills.Load(nil, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := acpAgent(model, "test/model", catalogue, nil, library, t.TempDir(), acp.New(acp.Models{
+		List:    []acp.Model{{Name: "test/model"}},
+		Default: "test/model",
+		Build:   func(string, string) (core.Model, error) { panic("no other model") },
+	}))
+	agent.Transcript, agent.History = discardTranscript{}, nil
+
+	// when
+	// ... it runs a turn
+	agent.StartTurn("hi")()
+
+	// then
+	// ... the model was offered the shell and nothing else
+	var names []string
+	for _, tool := range model.req.Tools {
+		names = append(names, tool.Name)
+	}
+	if !reflect.DeepEqual(names, []string{"shell"}) {
+		t.Errorf("tools offered = %q, want only shell", names)
 	}
 }

@@ -53,6 +53,18 @@ func validConfig() raw {
 	}
 }
 
+// with is m for model name, with thinking and efforts where given.
+func with(m DeclaredModel, name, thinking string, efforts []string) DeclaredModel {
+	m.Model = name
+	if thinking != "" {
+		m.Thinking = thinking
+	}
+	if efforts != nil {
+		m.Efforts = efforts
+	}
+	return m
+}
+
 // subagentsBlock is a subagents block allowing the given entries.
 func subagentsBlock(entries ...raw) raw {
 	models := make([]any, len(entries))
@@ -85,10 +97,14 @@ func TestAValidConfigResolvesTheSelectedModelWithoutRunningOtherKeyCommands(t *t
 	sel, err := Load(path)
 
 	// then
-	// ... the selection carries ollama's endpoint and thinking, and glm's effort
+	// ... the selection carries ollama's endpoint and thinking, and glm's effort,
+	// ... and every declared model by provider then name
 	if err != nil {
 		t.Fatal(err)
 	}
+	sel.Keys = nil // a cache, checked by the key tests
+	anthropic := DeclaredModel{Provider: "anthropic", Wire: "anthropic-messages", BaseURL: "https://api.anthropic.com", Thinking: "adaptive", Efforts: []string{"low", "high"}}
+	ollama := DeclaredModel{Provider: "ollama", Wire: "anthropic-messages", BaseURL: "http://localhost:11434", Thinking: "enabled"}
 	want := Selection{
 		Provider: "ollama",
 		Wire:     "anthropic-messages",
@@ -98,6 +114,13 @@ func TestAValidConfigResolvesTheSelectedModelWithoutRunningOtherKeyCommands(t *t
 		Thinking: "enabled",
 		Effort:   "high",
 		WebInfo:  "web: off (no provider configured)",
+		Models: []DeclaredModel{
+			with(anthropic, "haiku", "enabled", nil),
+			with(anthropic, "opus", "", nil),
+			with(ollama, "flash", "", []string{"low", "high", "max"}),
+			with(ollama, "gemma", "", nil),
+			with(ollama, "glm", "", []string{"low", "high", "max"}),
+		},
 	}
 	if !reflect.DeepEqual(sel, want) {
 		t.Errorf("selection = %+v, want %+v", sel, want)
@@ -554,5 +577,121 @@ func TestAProviderUsedBySeveralEntriesAndTheSelectionHasItsKeyCommandRunOnce(t *
 	keys := []string{sel.APIKey, sel.Subagents[0].APIKey, sel.Subagents[1].APIKey}
 	if want := []string{"sk-o", "sk-o", "sk-o"}; !reflect.DeepEqual(keys, want) {
 		t.Errorf("keys = %q, want %q", keys, want)
+	}
+}
+
+func TestHeadlessLoadGivesKeyCommandsNoStdin(t *testing.T) {
+	// given
+	// ... a process stdin holding input, and a selected key command that reads stdin
+	stdin, err := os.Create(filepath.Join(t.TempDir(), "stdin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stdin.WriteString("protocol bytes\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stdin.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	realStdin := os.Stdin
+	os.Stdin = stdin
+	t.Cleanup(func() { os.Stdin = realStdin })
+	c := validConfig()
+	c.provider("ollama")["apiKey"] = "!cat"
+	path := writeConfig(t, c)
+
+	// when
+	// ... it is loaded headless
+	_, loadErr := LoadHeadless(path)
+
+	// then
+	// ... the command saw no input, and the process's stdin is unread
+	if loadErr == nil || !strings.Contains(loadErr.Error(), "api key command printed nothing") {
+		t.Errorf("err = %v, want the key command to print nothing", loadErr)
+	}
+	offset, err := stdin.Seek(0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if offset != 0 {
+		t.Errorf("stdin offset = %d, want 0: the key command read it", offset)
+	}
+}
+
+func TestHeadlessLoadRunsOnlyTheSelectedKeyAndAnotherProvidersOnceWhenFirstAskedFor(t *testing.T) {
+	// given
+	// ... ollama selected headless, and anthropic named by a subagent entry,
+	// ... its key command recording each run
+	runs := filepath.Join(t.TempDir(), "runs")
+	c := validConfig()
+	c.provider("anthropic")["apiKey"] = "!echo run >> '" + runs + "'; echo sk-a"
+	c["subagents"] = subagentsBlock(raw{"provider": "anthropic", "model": "opus"})
+	sel, err := LoadHeadless(writeConfig(t, c))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, statErr := os.Stat(runs)
+
+	// when
+	// ... anthropic's key is asked for twice
+	first, firstErr := sel.Keys.Key("anthropic")
+	second, secondErr := sel.Keys.Key("anthropic")
+
+	// then
+	// ... the command had not run at load, then ran once, and both answers are its key
+	if !os.IsNotExist(statErr) {
+		t.Errorf("key command ran at load (stat err = %v)", statErr)
+	}
+	if firstErr != nil || secondErr != nil || first != "sk-a" || second != "sk-a" {
+		t.Errorf("keys = %q, %q (%v, %v), want sk-a twice", first, second, firstErr, secondErr)
+	}
+	recorded, err := os.ReadFile(runs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(recorded) != "run\n" {
+		t.Errorf("key command runs = %q, want one", recorded)
+	}
+}
+
+func TestAKeyAskedForAfterAHeadlessLoadGetsNoStdinAndItsFailureCarriesTheCommandsMessage(t *testing.T) {
+	// given
+	// ... a process stdin holding input, and an unselected provider whose key
+	// ... command reads stdin, then fails with a message
+	stdin, err := os.Create(filepath.Join(t.TempDir(), "stdin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stdin.WriteString("protocol bytes\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stdin.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	realStdin := os.Stdin
+	os.Stdin = stdin
+	t.Cleanup(func() { os.Stdin = realStdin })
+	c := validConfig()
+	c.provider("anthropic")["apiKey"] = "!cat; echo vault is sealed >&2; exit 1"
+	sel, err := LoadHeadless(writeConfig(t, c))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// when
+	// ... its key is asked for
+	_, keyErr := sel.Keys.Key("anthropic")
+
+	// then
+	// ... the error names the provider and carries the command's message, and stdin is unread
+	if keyErr == nil || !strings.Contains(keyErr.Error(), "providers.anthropic: ") || !strings.Contains(keyErr.Error(), "vault is sealed") {
+		t.Errorf("err = %v, want it to name anthropic and carry the command's message", keyErr)
+	}
+	offset, err := stdin.Seek(0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if offset != 0 {
+		t.Errorf("stdin offset = %d, want 0: the key command read it", offset)
 	}
 }
