@@ -442,10 +442,52 @@ func TestASubagentsBlockResolvesItsEntriesInTheOrderWritten(t *testing.T) {
 	}
 }
 
-func TestASubagentEntryWithoutAnEffortResolvesToNoEffort(t *testing.T) {
+func TestASubagentEntryWithoutAnEffortTakesTheParentsOrTheNextHigherItsModelHas(t *testing.T) {
+	levels := func(names ...any) []any { return names }
+	cases := []struct {
+		name          string
+		parentEfforts []any
+		parentEffort  string
+		childEfforts  []any
+		want          string
+	}{
+		{"the child's model lists the parent's effort", levels("low", "high", "max"), "high", levels("low", "high", "max"), "high"},
+		{"the next higher level the child's model lists", levels("low", "medium", "high", "xhigh", "max"), "xhigh", levels("low", "high", "max"), "max"},
+		{"no higher level, so the child's highest", levels("low", "medium", "high", "max"), "max", levels("low", "medium", "high"), "high"},
+		{"a higher level the child lacks is passed over", levels("low", "medium", "high", "max"), "medium", levels("low", "max"), "max"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// given
+			// ... the parent on glm at an effort, and an entry naming no effort for flash
+			c := validConfig()
+			c["effort"] = tc.parentEffort
+			c.model("ollama", "glm")["efforts"] = tc.parentEfforts
+			c.model("ollama", "flash")["efforts"] = tc.childEfforts
+			c["subagents"] = subagentsBlock(raw{"provider": "ollama", "model": "flash"})
+			path := writeConfig(t, c)
+
+			// when
+			// ... it is loaded
+			sel, err := Load(path)
+
+			// then
+			// ... the entry has the parent's effort, or the nearest above it that flash lists
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(sel.Subagents) != 1 || sel.Subagents[0].Effort != tc.want {
+				t.Errorf("subagents = %+v, want one entry with effort %q", sel.Subagents, tc.want)
+			}
+		})
+	}
+}
+
+func TestASubagentEntryWithoutAnEffortUnderAParentWithNoEffortLevelsResolvesToNoEffort(t *testing.T) {
 	// given
-	// ... an entry naming no effort for flash, which has effort levels
+	// ... the parent on gemma, which has no effort levels, and an entry naming no effort for flash, which has
 	c := validConfig()
+	c["model"] = "gemma"
 	c["subagents"] = subagentsBlock(raw{"provider": "ollama", "model": "flash"})
 	path := writeConfig(t, c)
 
@@ -454,7 +496,7 @@ func TestASubagentEntryWithoutAnEffortResolvesToNoEffort(t *testing.T) {
 	sel, err := Load(path)
 
 	// then
-	// ... the entry has no effort, not the selection's
+	// ... the entry has no effort: the parent has none to take
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -133,7 +133,8 @@ conversation and all, which reads the parent's cached prompt cheaply.
 - **Config.** A new optional `subagents` block holds `models`, a list of
   entries with `provider`, `model` and an optional `effort`. Each entry must
   name a declared provider and one of its models; `effort` is checked
-  against that model's efforts. At startup the key of every provider used by
+  against that model's efforts, and defaults to the parent's, or the
+  nearest level above it that the model has (see `provider-config.md`). At startup the key of every provider used by
   the selection or a subagent entry is resolved, before the TUI starts.
   Without the block, children can only use the parent's model.
 - **TUI buffers.** The TUI keeps one transcript per agent and shows one at a

@@ -262,8 +262,12 @@ may run on:
 
 Each entry names a declared provider and one of its models, once, and not
 the selected model, which subagents use anyway. `effort` is optional: it must
-be one of that model's efforts, and an entry without one sends none, leaving
-the level to the model. grimalkin refuses to start on an entry that doesn't
+be one of that model's efforts. An entry without one takes the top-level
+`effort`; if its model doesn't list that, the next higher level it does list,
+going up the selected model's `efforts`, or failing that its own highest. So
+write every `efforts` list lowest first. A model with no effort levels gets
+none, and so does every such entry when the selected model has none.
+grimalkin refuses to start on an entry that doesn't
 check out, and runs the key command of every provider an entry names at
 startup. A startup line lists the allowed models. The `agent` tool then
 takes a `model`, one of `provider/model` for the session's model and each
