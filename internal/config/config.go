@@ -69,7 +69,7 @@ type SubagentModel struct {
 	APIKey   string
 	Model    string
 	Thinking string
-	Effort   string // empty when the entry names none: no effort is sent
+	Effort   string // empty when the model has no effort levels, or the parent has none to take
 }
 
 // Web is the resolved web block: the provider in use and its key.
@@ -231,7 +231,7 @@ func (f file) resolve() (Selection, error) {
 	// mistake in the block is not reported after a password prompt.
 	var subagentModels []SubagentModel
 	if f.Subagents != nil {
-		subagentModels, err = f.subagentModels()
+		subagentModels, err = f.subagentModels(effort, efforts)
 		if err != nil {
 			return Selection{}, err
 		}
@@ -344,8 +344,9 @@ func (f file) lookup(providerName, modelName string) (provider, string, []string
 // subagentModels resolves the subagents block's entries in order, without
 // their keys. Unlike the top-level effort, an entry's effort is never
 // ignored: it names one model, so an effort that model cannot take is a
-// mistake.
-func (f file) subagentModels() ([]SubagentModel, error) {
+// mistake. An entry naming none takes the parent's: parentEffort, one of
+// parentEfforts, or empty and nil when the parent's model has no levels.
+func (f file) subagentModels(parentEffort string, parentEfforts []string) ([]SubagentModel, error) {
 	resolved := make([]SubagentModel, 0, len(f.Subagents.Models))
 	seen := map[[2]string]bool{}
 	for i, e := range f.Subagents.Models {
@@ -369,8 +370,10 @@ func (f file) subagentModels() ([]SubagentModel, error) {
 			return nil, fmt.Errorf("%s: %s/%s is already listed", at, e.Provider, e.Model)
 		}
 		seen[[2]string{e.Provider, e.Model}] = true
+		effort := e.Effort
 		switch {
 		case e.Effort == "":
+			effort = inheritedEffort(parentEffort, parentEfforts, efforts)
 		case efforts == nil:
 			return nil, fmt.Errorf("%s: effort %q given, but %s has no effort levels", at, e.Effort, e.Model)
 		case !slices.Contains(efforts, e.Effort):
@@ -383,10 +386,31 @@ func (f file) subagentModels() ([]SubagentModel, error) {
 			BaseURL:  p.BaseURL,
 			Model:    e.Model,
 			Thinking: thinking,
-			Effort:   e.Effort,
+			Effort:   effort,
 		})
 	}
 	return resolved, nil
+}
+
+// inheritedEffort is the effort of an entry that names none: the parent's
+// when the child's model lists it, else the next level above it that the
+// child's model lists, else the child's model's highest. "Above" is read from
+// the parent's model's list and "highest" from the child's, both taken to be
+// written lowest first. Empty when either model has no effort levels.
+func inheritedEffort(parentEffort string, parentEfforts, efforts []string) string {
+	if efforts == nil || parentEfforts == nil {
+		return ""
+	}
+	at := slices.Index(parentEfforts, parentEffort)
+	if at < 0 {
+		panic(fmt.Sprintf("parent effort %q is not one of its model's efforts", parentEffort))
+	}
+	for _, level := range parentEfforts[at:] {
+		if slices.Contains(efforts, level) {
+			return level
+		}
+	}
+	return efforts[len(efforts)-1]
 }
 
 // validate returns errors prefixed with ": " or ".models.<name>: ", so the

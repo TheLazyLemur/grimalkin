@@ -1,7 +1,7 @@
 ---
 id: 3
 title: Subagents cannot use another model or fork
-status: open
+status: closed
 ---
 
 ## Goal
@@ -45,9 +45,9 @@ is built, including how its history ends.
 - [x] #21 The agent tool takes `fork` (after #20)
 - [x] #22 grimalkin builds a `Model` per allowed subagent entry (after #19, #20)
 - [x] #23 The status bar shows the shown buffer's model and effort (after #15, #19)
-- [ ] #24 A subagent entry without an effort takes the parent's (after #19)
+- [x] #24 A subagent entry without an effort takes the parent's (after #19)
 
-Can start now: #24
+Can start now: none; every task is done
 
 ```mermaid
 graph TD
