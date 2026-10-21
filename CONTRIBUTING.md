@@ -19,6 +19,8 @@ internal/adapters/
   skills/                 outbound: Skills port over SKILL.md directories,
                           rendering arguments, variables and !`cmd`
   clipboard/              outbound: tui.Clipboard via pbcopy
+  acp/                    inbound: ACP agent over stdio (`grimalkin acp`);
+                          drives the core via acp.Agent, is its Transcript
   tui/                    inbound: Ultraviolet UI, editor, navigation,
                           markdown; drives the core via tui.Agent
 scripts/check-imports.sh  enforces the import rules
@@ -81,6 +83,18 @@ sets `Agent.ModelName` to `provider/model` from the config selection, and
 block, named the same way and in its order (`subagentModels`). `newModel`
 maps a provider's wire to its adapter; an entry on a wire it doesn't know is
 a startup error naming the entry.
+
+**ACP.** `acp.Server` (`internal/adapters/acp`) is the second driver of the
+core, beside the TUI, and implements `core.Transcript` itself: `main.go` wires
+it as the `core.Agent`'s transcript, then calls `Serve(agent, stdin, stdout)`.
+One session per process. A `session/prompt` starts a turn with `StartTurn`,
+so a `session/cancel` that arrives straight away still reaches it, and runs it
+on the request's goroutine and answers when it returns: `end_turn`, `cancelled` if
+`session/cancel` came in meanwhile, or an error carrying the reason of a
+`TurnDiscarded`. The adapter enforces one turn at a time, since the core has
+no busy guard. `ReplyText` becomes `agent_message_chunk`; other events are
+not shown yet. For now the agent has no tools at all. Tests drive the adapter
+with the SDK's client side over `io.Pipe`. Spec: `docs/specs/acp.md`.
 
 **Search.** `tools.Search` lists files with `rg --files` (so `.gitignore`
 holds), filters and keyword-scores them in Go, and sends the best excerpt of

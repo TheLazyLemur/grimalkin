@@ -306,6 +306,57 @@ func TestCancellingDuringConcurrentToolCallsStopsThemAllAndDiscardsTheTurn(t *te
 	}
 }
 
+func TestCancellingAfterStartTurnButBeforeItRunsDiscardsTheTurn(t *testing.T) {
+	// given
+	// ... a model that fails once its context is cancelled, and a turn started but not yet run
+	model := &mockModel{
+		replies: []mockReply{{resp: ModelResponse{StopReason: StopEndTurn, Content: "A1"}}},
+		hold:    func(ctx context.Context, _ ModelRequest) error { return ctx.Err() },
+	}
+	transcript := &mockTranscript{}
+	a := newAgent(model, transcript)
+	run := a.StartTurn("go")
+
+	// when
+	// ... the user cancels, and then the turn runs
+	a.Cancel()
+	run()
+
+	// then
+	// ... the turn is discarded as cancelled
+	if last := transcript.last(); last != (TurnDiscarded{Reason: "cancelled"}) {
+		t.Errorf("last event = %#v", last)
+	}
+	if len(a.messages) != 0 {
+		t.Errorf("len(messages) = %d, want 0", len(a.messages))
+	}
+}
+
+func TestCancellingWhileIdleDoesNotCancelTheNextTurn(t *testing.T) {
+	// given
+	// ... a model that fails once its context is cancelled, and a cancel with no turn pending
+	model := &mockModel{
+		replies: []mockReply{{resp: ModelResponse{StopReason: StopEndTurn, Content: "A1"}}},
+		hold:    func(ctx context.Context, _ ModelRequest) error { return ctx.Err() },
+	}
+	transcript := &mockTranscript{}
+	a := newAgent(model, transcript)
+	a.Cancel()
+
+	// when
+	// ... a turn runs
+	a.RunTurn("go")
+
+	// then
+	// ... it ran to its end
+	if last := transcript.last(); last == (TurnDiscarded{Reason: "cancelled"}) {
+		t.Errorf("turn was cancelled")
+	}
+	if len(a.messages) != 2 {
+		t.Errorf("len(messages) = %d, want 2", len(a.messages))
+	}
+}
+
 func TestAPanicInOneOfSeveralToolCallsStopsTheOthersAndPanicsTheTurn(t *testing.T) {
 	// given
 	// ... a tool that panics while another runs until its context is cancelled

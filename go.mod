@@ -6,6 +6,7 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.75.0
 	github.com/charmbracelet/ultraviolet v0.0.0-20260811164956-006e29f97886
 	github.com/charmbracelet/x/ansi v0.11.8
+	github.com/coder/acp-go-sdk v0.13.5
 	go.yaml.in/yaml/v3 v3.0.5
 )
 

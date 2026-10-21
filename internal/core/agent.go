@@ -78,12 +78,23 @@ func (a *Agent) Cancel() {
 	}
 }
 
-func (a *Agent) RunTurn(prompt string) {
+// RunTurn runs a turn that starts with prompt and returns when it has ended.
+func (a *Agent) RunTurn(prompt string) { a.StartTurn(prompt)() }
+
+// StartTurn makes the turn that starts with prompt cancellable and returns at
+// once with run, which runs it and returns when it has ended. Cancel from this
+// call on ends the turn, even before run has started it, so a caller that runs
+// the turn on another goroutine starts it first. run must be called, once.
+func (a *Agent) StartTurn(prompt string) (run func()) {
 	a.checkWiring()
 	ctx, cancel := context.WithCancel(context.Background())
 	a.mu.Lock()
 	a.cancel = cancel
 	a.mu.Unlock()
+	return func() { a.runTurn(ctx, cancel, prompt) }
+}
+
+func (a *Agent) runTurn(ctx context.Context, cancel context.CancelFunc, prompt string) {
 	defer func() {
 		a.mu.Lock()
 		a.cancel = nil

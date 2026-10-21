@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 
+	"grimalkin/internal/adapters/acp"
 	"grimalkin/internal/adapters/anthropic"
 	"grimalkin/internal/adapters/clipboard"
 	"grimalkin/internal/adapters/skills"
@@ -98,12 +99,35 @@ func main() {
 	os.Exit(0)
 }
 
+// runACP serves one ACP session on stdin and stdout, with no tools: the
+// permission gate that must stand in front of them is not built yet. stdout
+// carries protocol messages only, so nothing is printed to it here.
+func runACP(model core.Model, cwd string) error {
+	server := acp.New()
+	agent := &core.Agent{
+		Model:      model,
+		Transcript: server,
+		System:     core.SystemPrompt(osName(), cwd, nil),
+	}
+	return server.Serve(agent, os.Stdin, os.Stdout)
+}
+
 func run() error {
+	args := os.Args[1:]
+	acpMode := len(args) == 1 && args[0] == "acp"
+	if len(args) > 0 && !acpMode {
+		return fmt.Errorf("usage: grimalkin [acp]")
+	}
 	path, err := config.DefaultPath()
 	if err != nil {
 		return err
 	}
-	sel, err := config.Load(path)
+	// An ACP agent's stdin is the protocol stream, so key commands get none.
+	load := config.Load
+	if acpMode {
+		load = config.LoadHeadless
+	}
+	sel, err := load(path)
 	if err != nil {
 		return err
 	}
@@ -118,6 +142,9 @@ func run() error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("get working directory: %w", err)
+	}
+	if acpMode {
+		return runACP(model, cwd)
 	}
 
 	library, warnings, err := skills.Load(sel.SkillDirs, cwd)

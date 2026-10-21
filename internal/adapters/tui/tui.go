@@ -16,14 +16,15 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// Agent is the parent agent. RunTurn blocks until the parent's turn ends and
+// Agent is the parent agent. StartTurn makes the parent's turn cancellable and
+// returns run, which must be called once and blocks until the turn ends.
 // Cancel cancels it, with every child it started. StartChildTurn claims a
 // child for a turn the user starts on it: it returns at once, with an error
 // when the child can't take one, and otherwise run, which must be called
 // once and blocks until that turn ends. CancelChild cancels the turn one
 // child is running or waiting to run, whoever started it.
 type Agent interface {
-	RunTurn(prompt string)
+	StartTurn(prompt string) (run func())
 	Cancel()
 	StartChildTurn(number int, prompt string) (run func(), err error)
 	CancelChild(number int)
@@ -584,7 +585,7 @@ func (m *model) send() {
 		return
 	}
 	prompt := string(m.editor.text)
-	run := func() { m.agent.RunTurn(prompt) }
+	var run func()
 	switch {
 	case strings.TrimSpace(prompt) == indexCommand:
 		run = nil
@@ -596,6 +597,8 @@ func (m *model) send() {
 		}
 		m.childTurns[m.shown] = true
 	default:
+		// Started here, on the goroutine that cancels, so a cancel can't miss it.
+		run = m.agent.StartTurn(prompt)
 		m.busy = true
 	}
 	// Sending goes back to the bottom, wherever the transcript was left.

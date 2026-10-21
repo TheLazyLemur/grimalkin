@@ -151,7 +151,15 @@ func DefaultPath() (string, error) {
 	return filepath.Join(home, ".config", "grimalkin", "config.json"), nil
 }
 
-func Load(path string) (Selection, error) {
+// Load reads the config. Key commands share the terminal's stdin, so they can
+// prompt.
+func Load(path string) (Selection, error) { return load(path, os.Stdin) }
+
+// LoadHeadless is Load for a process whose stdin is not a terminal, such as
+// an ACP agent's protocol stream: key commands get no stdin.
+func LoadHeadless(path string) (Selection, error) { return load(path, nil) }
+
+func load(path string, stdin *os.File) (Selection, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Selection{}, fmt.Errorf("read config: %w", err)
@@ -162,14 +170,14 @@ func Load(path string) (Selection, error) {
 	if err := dec.Decode(&f); err != nil {
 		return Selection{}, fmt.Errorf("%s: %w", path, err)
 	}
-	sel, err := f.resolve()
+	sel, err := f.resolve(stdin)
 	if err != nil {
 		return Selection{}, fmt.Errorf("%s: %w", path, err)
 	}
 	return sel, nil
 }
 
-func (f file) resolve() (Selection, error) {
+func (f file) resolve(stdin *os.File) (Selection, error) {
 	for _, field := range []struct{ name, value string }{
 		{"provider", f.Provider}, {"model", f.Model}, {"effort", f.Effort},
 	} {
@@ -243,7 +251,7 @@ func (f file) resolve() (Selection, error) {
 		if key, ok := keys[name]; ok {
 			return key, nil
 		}
-		key, err := resolveKey(f.Providers[name].APIKey)
+		key, err := resolveKey(f.Providers[name].APIKey, stdin)
 		if err != nil {
 			return "", fmt.Errorf("providers.%s: %w", name, err)
 		}
@@ -270,7 +278,7 @@ func (f file) resolve() (Selection, error) {
 		if f.Search.APIKey == "" {
 			err = errors.New(`no "apiKey"`)
 		} else {
-			searchKey, err = resolveKey(f.Search.APIKey)
+			searchKey, err = resolveKey(f.Search.APIKey, stdin)
 		}
 		if err != nil {
 			searchOff = fmt.Sprintf("search: off (%v)", err)
@@ -288,7 +296,7 @@ func (f file) resolve() (Selection, error) {
 	webInfo := "web: off (no provider configured)"
 	if len(webNames) > 0 {
 		name := webNames[0]
-		webKey, err := resolveKey(f.Web[name].APIKey)
+		webKey, err := resolveKey(f.Web[name].APIKey, stdin)
 		switch {
 		case err != nil:
 			webInfo = fmt.Sprintf("web: off (%s: %v)", name, err)
@@ -468,15 +476,17 @@ func checkThinking(value string) error {
 }
 
 // resolveKey returns a literal key, or runs a key starting with "!" as a shell
-// command. The command shares the terminal so it can prompt; only its stdout
-// is captured.
-func resolveKey(key string) (string, error) {
+// command. The command gets stdin (none when nil) so it can prompt; only its
+// stdout is captured.
+func resolveKey(key string, stdin *os.File) (string, error) {
 	command, isCommand := strings.CutPrefix(key, "!")
 	if !isCommand {
 		return key, nil
 	}
 	cmd := exec.Command("/bin/sh", "-c", command)
-	cmd.Stdin = os.Stdin
+	if stdin != nil { // a nil *os.File in the interface would not mean no stdin
+		cmd.Stdin = stdin
+	}
 	cmd.Stderr = os.Stderr
 	out, err := cmd.Output()
 	if err != nil {

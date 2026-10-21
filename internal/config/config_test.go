@@ -556,3 +556,41 @@ func TestAProviderUsedBySeveralEntriesAndTheSelectionHasItsKeyCommandRunOnce(t *
 		t.Errorf("keys = %q, want %q", keys, want)
 	}
 }
+
+func TestHeadlessLoadGivesKeyCommandsNoStdin(t *testing.T) {
+	// given
+	// ... a process stdin holding input, and a selected key command that reads stdin
+	stdin, err := os.Create(filepath.Join(t.TempDir(), "stdin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stdin.WriteString("protocol bytes\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stdin.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	realStdin := os.Stdin
+	os.Stdin = stdin
+	t.Cleanup(func() { os.Stdin = realStdin })
+	c := validConfig()
+	c.provider("ollama")["apiKey"] = "!cat"
+	path := writeConfig(t, c)
+
+	// when
+	// ... it is loaded headless
+	_, loadErr := LoadHeadless(path)
+
+	// then
+	// ... the command saw no input, and the process's stdin is unread
+	if loadErr == nil || !strings.Contains(loadErr.Error(), "api key command printed nothing") {
+		t.Errorf("err = %v, want the key command to print nothing", loadErr)
+	}
+	offset, err := stdin.Seek(0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if offset != 0 {
+		t.Errorf("stdin offset = %d, want 0: the key command read it", offset)
+	}
+}

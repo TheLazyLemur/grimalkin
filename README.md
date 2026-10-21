@@ -13,7 +13,7 @@ Ultraviolet and has a shell, [search](#search), [web](#web) tools,
 
 **Contents:** [Quick start](#quick-start) ·
 [Configuration](#configuration) · [Search](#search) · [Web](#web) ·
-[Skills](#skills) · [Subagents](#subagents) · [Keys](#keys)
+[Skills](#skills) · [Subagents](#subagents) · [ACP](#acp) · [Keys](#keys)
 
 Working on grimalkin itself? See [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -300,6 +300,18 @@ In the session's buffer, `Ctrl-C` stops the turn and every subagent it started.
 > **Warning:** a subagent's shell is the same **unsandboxed** shell, and its
 > commands do not appear in the session's transcript, only the count of them:
 > open its buffer to see them.
+
+## ACP
+
+`grimalkin acp` runs grimalkin as an [Agent Client Protocol](https://agentclientprotocol.com)
+agent on stdin and stdout instead of the TUI, from the same config. It is
+work in progress: one session per process, and one text turn at a time with
+no tools (no shell, search, web or skills) until the permission gate exists.
+Reply text streams as `agent_message_chunk` updates. `session/cancel` stops a
+turn, and a turn that fails answers `session/prompt` with an error.
+`loadSession` and the other capabilities are not advertised yet. stdout
+carries protocol messages only; errors go to stderr. Key commands still run at startup,
+but with no stdin, so one that prompts fails.
 
 ## Keys
 
