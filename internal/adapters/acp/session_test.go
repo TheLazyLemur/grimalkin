@@ -18,7 +18,8 @@ func (s *session) load(id sdk.SessionId) error {
 	return err
 }
 
-// shown is each session update received, as "user: text" or "agent: text".
+// shown is each session update received, as "user: text", "agent: text",
+// "tool_call id status" or "tool_update id status".
 func (c *recordingClient) shown() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -29,6 +30,10 @@ func (c *recordingClient) shown() []string {
 			lines = append(lines, "user: "+n.Update.UserMessageChunk.Content.Text.Text)
 		case n.Update.AgentMessageChunk != nil:
 			lines = append(lines, "agent: "+n.Update.AgentMessageChunk.Content.Text.Text)
+		case n.Update.ToolCall != nil:
+			lines = append(lines, "tool_call "+string(n.Update.ToolCall.ToolCallId)+" "+string(n.Update.ToolCall.Status))
+		case n.Update.ToolCallUpdate != nil:
+			lines = append(lines, "tool_update "+string(n.Update.ToolCallUpdate.ToolCallId)+" "+string(*n.Update.ToolCallUpdate.Status))
 		default:
 			lines = append(lines, "other update")
 		}

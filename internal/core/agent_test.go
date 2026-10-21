@@ -142,6 +142,22 @@ type mockHistory struct{ kept []Message }
 
 func (m *mockHistory) Keep(messages []Message) { m.kept = append(m.kept, messages...) }
 
+// mockGate allows the calls allow says yes to, and records every call it
+// is asked about. allow may block on ctx, as a person answering would.
+type mockGate struct {
+	allow func(ctx context.Context, call ToolCall) (bool, string)
+
+	mu    sync.Mutex
+	calls []ToolCall
+}
+
+func (m *mockGate) Allow(ctx context.Context, call ToolCall) (bool, string) {
+	m.mu.Lock()
+	m.calls = append(m.calls, call)
+	m.mu.Unlock()
+	return m.allow(ctx, call)
+}
+
 func toolCall(id, name, input string) ToolCall {
 	return ToolCall{ID: id, Name: name, Input: json.RawMessage(input)}
 }
@@ -177,12 +193,12 @@ func TestAToolCallIsShownRunAndItsResultSentBackToTheModel(t *testing.T) {
 	// ... the transcript sees each step, the tool got the call's input and its result went back to the model
 	want := []Event{
 		ReplyStarted{},
-		ToolStarted{ID: "toolu_1", Name: "list", Summary: `list {"dir":"."}`},
+		ToolStarted{ID: "toolu_1", Name: "list", Summary: `list {"dir":"."}`, Input: json.RawMessage(`{"dir":"."}`)},
 		ToolFinished{ID: "toolu_1", Output: "a.txt"},
 		ReplyStarted{},
 		ReplyText{Text: "done"},
 	}
-	if !slices.Equal(transcript.events, want) {
+	if !reflect.DeepEqual(transcript.events, want) {
 		t.Errorf("events = %#v\nwant %#v", transcript.events, want)
 	}
 	if !slices.Equal(tool.inputs, []string{`{"dir":"."}`}) {
@@ -193,6 +209,102 @@ func TestAToolCallIsShownRunAndItsResultSentBackToTheModel(t *testing.T) {
 	}
 	if len(a.messages) != 4 {
 		t.Errorf("len(messages) = %d, want 4", len(a.messages))
+	}
+}
+
+func TestAGateSeesAnAllowedCallBeforeItRunsAndTheCallRunsAsBefore(t *testing.T) {
+	// given
+	// ... a gate that allows everything, on an agent whose model calls a tool once
+	model := &mockModel{replies: []mockReply{
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_1", "list", `{"dir":"."}`)}, Content: raw("A1")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("A2")}},
+	}}
+	tool := &mockTool{name: "list", run: returning("a.txt", nil)}
+	transcript := &mockTranscript{}
+	gate := &mockGate{allow: func(context.Context, ToolCall) (bool, string) { return true, "" }}
+	a := newAgent(model, transcript, tool)
+	a.Gate = gate
+
+	// when
+	// ... a turn runs
+	a.RunTurn("list files")
+
+	// then
+	// ... the gate saw the call's id, name and input, the tool ran and its result went back
+	if want := []ToolCall{toolCall("toolu_1", "list", `{"dir":"."}`)}; !reflect.DeepEqual(gate.calls, want) {
+		t.Errorf("gate calls = %#v, want %#v", gate.calls, want)
+	}
+	if !slices.Equal(tool.inputs, []string{`{"dir":"."}`}) {
+		t.Errorf("tool inputs = %v", tool.inputs)
+	}
+	if got := lastToolResult(model.requests, 1); got != (ToolResult{ToolUseID: "toolu_1", Content: "a.txt"}) {
+		t.Errorf("tool result = %+v", got)
+	}
+}
+
+func TestADeniedCallDoesNotRunAndTheModelGetsTheReasonAsAnError(t *testing.T) {
+	// given
+	// ... a gate that denies with a reason
+	model := &mockModel{replies: []mockReply{
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_1", "list", `{}`)}, Content: raw("A1")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("A2")}},
+	}}
+	tool := &mockTool{name: "list", run: returning("a.txt", nil)}
+	transcript := &mockTranscript{}
+	a := newAgent(model, transcript, tool)
+	a.Gate = &mockGate{allow: func(context.Context, ToolCall) (bool, string) { return false, "user said no" }}
+
+	// when
+	// ... a turn runs
+	a.RunTurn("list files")
+
+	// then
+	// ... the tool never ran, the transcript shows the call failing and the model got the reason as an error
+	if len(tool.inputs) != 0 {
+		t.Errorf("tool ran with %v", tool.inputs)
+	}
+	if got := transcript.events[2]; got != (ToolFinished{ID: "toolu_1", Output: "user said no", IsError: true}) {
+		t.Errorf("event = %#v", got)
+	}
+	if got := lastToolResult(model.requests, 1); got != (ToolResult{ToolUseID: "toolu_1", Content: "user said no", IsError: true}) {
+		t.Errorf("tool result = %+v", got)
+	}
+}
+
+func TestCancellingTheTurnWhileTheGateIsBlockedEndsItCancelled(t *testing.T) {
+	// given
+	// ... a gate that blocks until its context is cancelled
+	model := &mockModel{replies: []mockReply{
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_1", "list", `{}`)}, Content: raw("A1")}},
+	}}
+	tool := &mockTool{name: "list", run: returning("a.txt", nil)}
+	transcript := &mockTranscript{}
+	a := newAgent(model, transcript, tool)
+	asked := make(chan struct{})
+	a.Gate = &mockGate{allow: func(ctx context.Context, call ToolCall) (bool, string) {
+		close(asked)
+		<-ctx.Done()
+		return true, ""
+	}}
+
+	// when
+	// ... the turn is cancelled once the gate is asked
+	done := make(chan struct{})
+	go func() { a.RunTurn("go"); close(done) }()
+	asked2 := await(asked)
+	a.Cancel()
+	finished := await(done)
+
+	// then
+	// ... the turn ended discarded as cancelled, and the tool never ran
+	if asked2 != nil || finished != nil {
+		t.Fatalf("gate asked: %v, turn finished: %v", asked2, finished)
+	}
+	if last := transcript.last(); last != (TurnDiscarded{Reason: "cancelled"}) {
+		t.Errorf("last event = %#v", last)
+	}
+	if len(tool.inputs) != 0 {
+		t.Errorf("tool ran with %v", tool.inputs)
 	}
 }
 

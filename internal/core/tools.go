@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime/debug"
 	"sync"
@@ -100,17 +101,17 @@ func (a *Agent) runTools(ctx context.Context, calls []ToolCall) []ToolResult {
 
 func (a *Agent) runTool(ctx context.Context, call ToolCall) ToolResult {
 	if a.forked && call.Name == AgentToolName {
-		return a.runCall(call, AgentToolName+" "+string(call.Input), maxToolResultBytes, func() (string, error) {
+		return a.runCall(ctx, call, AgentToolName+" "+string(call.Input), maxToolResultBytes, func() (string, error) {
 			return "", errForkStartsSubagent
 		})
 	}
 	tool := a.findTool(call.Name)
 	if tool == nil {
-		return a.runCall(call, call.Name, maxToolResultBytes, func() (string, error) {
+		return a.runCall(ctx, call, call.Name, maxToolResultBytes, func() (string, error) {
 			return "", fmt.Errorf("unknown tool %q", call.Name)
 		})
 	}
-	return a.runCall(call, tool.Summary(call.Input), maxToolResultBytes, func() (string, error) {
+	return a.runCall(ctx, call, tool.Summary(call.Input), maxToolResultBytes, func() (string, error) {
 		return tool.Run(ctx, call.Input)
 	})
 }
@@ -119,18 +120,18 @@ func (a *Agent) runTool(ctx context.Context, call ToolCall) ToolResult {
 // the skill calls before it in the same response. A skill cut short loses
 // instructions, so its result has no cap; its parts are capped instead.
 func (a *Agent) runSkillCall(ctx context.Context, call ToolCall, loaded []ToolResult) ToolResult {
-	return a.runCall(call, skillSummary(call.Input), 0, func() (string, error) {
+	return a.runCall(ctx, call, skillSummary(call.Input), 0, func() (string, error) {
 		return a.runSkillTool(ctx, call.Input, loaded)
 	})
 }
 
 // runCall shows a call starting and finishing around run, and caps its
 // output at limit bytes unless limit is 0.
-func (a *Agent) runCall(call ToolCall, summary string, limit int, run func() (string, error)) ToolResult {
-	a.show(ToolStarted{ID: call.ID, Name: call.Name, Summary: summary})
+func (a *Agent) runCall(ctx context.Context, call ToolCall, summary string, limit int, run func() (string, error)) ToolResult {
+	a.show(ToolStarted{ID: call.ID, Name: call.Name, Summary: summary, Input: call.Input})
 	a.countToolCall()
 
-	output, err := run()
+	output, err := a.gated(ctx, call, run)
 	if err != nil {
 		output = err.Error()
 	}
@@ -139,6 +140,25 @@ func (a *Agent) runCall(call ToolCall, summary string, limit int, run func() (st
 		output = lastBytes(output, limit)
 	}
 	return ToolResult{ToolUseID: call.ID, Content: output, IsError: err != nil}
+}
+
+// gated runs run once a.Gate, if any, allows the call. A turn cancelled while
+// the gate waits ends the call as a cancelled run does, with ctx's error.
+func (a *Agent) gated(ctx context.Context, call ToolCall, run func() (string, error)) (string, error) {
+	if a.Gate == nil {
+		return run()
+	}
+	ok, reason := a.Gate.Allow(ctx, call)
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	if !ok {
+		if reason == "" {
+			reason = "not allowed"
+		}
+		return "", errors.New(reason)
+	}
+	return run()
 }
 
 func lastBytes(s string, limit int) string {

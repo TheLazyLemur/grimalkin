@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -23,16 +22,23 @@ type record struct {
 	Messages []core.Message `json:"messages,omitempty"`
 }
 
-// display is one thing the client was shown. Tool calls get kinds of their
-// own when the adapter shows them.
+// display is one thing the client was shown. Text is the prompt's, the
+// reply's or a tool's output; the other fields are a tool call's.
 type display struct {
-	Kind string `json:"kind"` // displayPrompt or displayReply
-	Text string `json:"text"`
+	Kind    string          `json:"kind"` // one of the display kinds
+	Text    string          `json:"text,omitempty"`
+	ToolID  string          `json:"tool_id,omitempty"`
+	Name    string          `json:"name,omitempty"`    // displayToolStart
+	Summary string          `json:"summary,omitempty"` // displayToolStart
+	Input   json.RawMessage `json:"input,omitempty"`   // displayToolStart
+	Failed  bool            `json:"failed,omitempty"`  // displayToolEnd
 }
 
 const (
-	displayPrompt = "prompt"
-	displayReply  = "reply"
+	displayPrompt    = "prompt"
+	displayReply     = "reply"
+	displayToolStart = "tool_start"
+	displayToolEnd   = "tool_end"
 )
 
 // sessionIDPattern is the shape NewSession makes. A client's id becomes a
@@ -85,28 +91,42 @@ type saved struct {
 	lastTurn int
 }
 
+// readSession reads a session file. A last line that isn't JSON is a write
+// the process died in: it is cut off the file, so what is appended next
+// doesn't join it, and the session loads without it. A bad line anywhere else
+// is an error.
 func readSession(path string) (saved, error) {
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return saved{}, err
 	}
-	defer f.Close()
 	var records []record
-	dec := json.NewDecoder(f)
-	for {
-		var r record
-		err := dec.Decode(&r)
-		if errors.Is(err, io.EOF) {
-			break
+	for start := 0; start < len(data); {
+		line, next := data[start:], len(data)
+		if i := bytes.IndexByte(line, '\n'); i >= 0 {
+			line, next = line[:i], start+i+1
 		}
-		if err != nil {
-			return saved{}, fmt.Errorf("record %d: %w", len(records)+1, err)
+		lineStart := start
+		start = next
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		n := len(records) + 1
+		var r record
+		if err := json.Unmarshal(line, &r); err != nil {
+			if next == len(data) && !json.Valid(line) {
+				if err := os.Truncate(path, int64(lineStart)); err != nil {
+					return saved{}, fmt.Errorf("cut the torn last line: %w", err)
+				}
+				break
+			}
+			return saved{}, fmt.Errorf("record %d: %w", n, err)
 		}
 		if (r.Display == nil) == (r.Messages == nil) || r.Turn < 1 {
-			return saved{}, fmt.Errorf("record %d: want a turn and either display or messages", len(records)+1)
+			return saved{}, fmt.Errorf("record %d: want a turn and either display or messages", n)
 		}
-		if r.Display != nil && r.Display.Kind != displayPrompt && r.Display.Kind != displayReply {
-			return saved{}, fmt.Errorf("record %d: unknown display kind %q", len(records)+1, r.Display.Kind)
+		if err := r.Display.validate(); err != nil {
+			return saved{}, fmt.Errorf("record %d: %w", n, err)
 		}
 		records = append(records, r)
 	}
@@ -125,4 +145,26 @@ func readSession(path string) (saved, error) {
 		}
 	}
 	return s, nil
+}
+
+// validate says what is wrong with a display record read from a file. A nil
+// display is fine: the record is a messages one.
+func (d *display) validate() error {
+	if d == nil {
+		return nil
+	}
+	switch d.Kind {
+	case displayPrompt, displayReply:
+	case displayToolStart:
+		if d.ToolID == "" || d.Name == "" {
+			return errors.New("a tool_start has no tool_id or name")
+		}
+	case displayToolEnd:
+		if d.ToolID == "" {
+			return errors.New("a tool_end has no tool_id")
+		}
+	default:
+		return fmt.Errorf("unknown display kind %q", d.Kind)
+	}
+	return nil
 }

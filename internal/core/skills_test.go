@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -134,7 +135,7 @@ func TestTheModelLoadsASkillAndGetsItsRenderedContentUncapped(t *testing.T) {
 	if !slices.Equal(skills.renders, []string{"review|a b"}) {
 		t.Errorf("renders = %v", skills.renders)
 	}
-	if started := transcript.events[1]; started != (ToolStarted{ID: "toolu_1", Name: SkillToolName, Summary: "skill review a b"}) {
+	if started := transcript.events[1]; !reflect.DeepEqual(started, ToolStarted{ID: "toolu_1", Name: SkillToolName, Summary: "skill review a b", Input: skillCall("toolu_1", "review", "a b").Input}) {
 		t.Errorf("event = %#v", started)
 	}
 	if got := lastToolResult(model.requests, 1); got.Content != big || got.IsError {

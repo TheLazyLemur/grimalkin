@@ -19,6 +19,7 @@ type ToolSpec struct {
 	Name        string
 	Description string
 	InputSchema string // JSON Schema
+	NonStrict   bool   // the schema isn't strict-compatible (a client's tool); zero keeps strict
 }
 
 type ToolCall struct {
@@ -76,6 +77,15 @@ type Tool interface {
 	Spec() ToolSpec
 	Summary(input json.RawMessage) string
 	Run(ctx context.Context, input json.RawMessage) (string, error)
+}
+
+// Gate decides whether a tool call may run. Allow is called after the call's
+// ToolStarted and before the tool runs, and may block for as long as a person
+// takes to answer; ctx is the turn's, and Allow must return once it is done.
+// A call that is not allowed doesn't run: the model gets reason as an error
+// result. Allow is called from several goroutines at once.
+type Gate interface {
+	Allow(ctx context.Context, call ToolCall) (ok bool, reason string)
 }
 
 // Transcript shows an event of the numbered agent's, the parent being 0.

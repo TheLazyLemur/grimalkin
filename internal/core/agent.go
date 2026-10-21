@@ -18,6 +18,7 @@ type Agent struct {
 	Tools      []Tool
 	Skills     Skills  // optional
 	History    History // optional; a child never has one
+	Gate       Gate    // optional; asked before every tool call. A child never has one
 
 	// SubagentTools is the tool list of the children this agent starts.
 	// The agent tool is offered only when it is non-nil.

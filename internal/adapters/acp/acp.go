@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -23,19 +24,27 @@ import (
 )
 
 // Agent is the part of the core this adapter drives, satisfied by
-// *core.Agent. Its Transcript and History must be the Server that drives it.
+// *core.Agent. Its Transcript, History and Gate must be the Server that
+// drives it.
 type Agent interface {
 	StartTurn(prompt string) (run func())
 	Cancel()
 	Seed(messages []core.Message) error
 }
 
+// NewAgent builds the agent for a session, once the client's tools are
+// known: it must offer them beside its own.
+type NewAgent func(clientTools []core.Tool) Agent
+
 // Server is the ACP agent for one session per process. It is also the core's
 // Transcript and History: wire it as the Agent's, then Serve that Agent.
 type Server struct {
 	mu        sync.Mutex
-	conn      *sdk.AgentSideConnection
-	agent     Agent
+	reserved  map[string]bool // names the agent's own tools have; a client tool can't take one
+	conn      *sdk.Connection
+	newAgent  NewAgent
+	agent     Agent         // nil until session/new or session/load
+	starting  bool          // a session/new or session/load is connecting the client's tools
 	sessionID sdk.SessionId // empty until session/new or session/load
 	path      string        // the session's file, set with sessionID
 	saveErr   error         // the first failed write; the session can't be saved after it
@@ -46,28 +55,56 @@ type Server struct {
 
 // turn is what the adapter learns while a turn runs.
 type turn struct {
-	n         int             // its number in the session's file
-	reply     strings.Builder // the reply text shown, saved when the turn is kept
-	cancelled bool            // session/cancel arrived
-	discarded bool            // the core discarded the turn
-	reason    string          // why, when discarded
+	n         int               // its number in the session's file
+	reply     strings.Builder   // the reply text shown since the last record, saved when the turn is kept
+	records   []record          // what the turn showed, in order, saved when it is kept
+	summaries map[string]string // each tool call's summary by id, its title to the client
+	cancelled bool              // session/cancel arrived
+	discarded bool              // the core discarded the turn
+	reason    string            // why, when discarded
+}
+
+// shown records what the client was shown, after the reply text shown before
+// it, so the order is kept. s.mu must be held.
+func (s *Server) shown(d display) {
+	s.flushReply()
+	s.turn.records = append(s.turn.records, record{Turn: s.turn.n, Display: &d})
+}
+
+// flushReply moves the reply text shown so far into the records. s.mu must
+// be held.
+func (s *Server) flushReply() {
+	if s.turn.reply.Len() > 0 {
+		s.turn.records = append(s.turn.records, record{Turn: s.turn.n, Display: &display{Kind: displayReply, Text: s.turn.reply.String()}})
+		s.turn.reply.Reset()
+	}
 }
 
 var (
-	_ sdk.Agent       = (*Server)(nil)
-	_ sdk.AgentLoader = (*Server)(nil)
 	_ core.Transcript = (*Server)(nil)
 	_ core.History    = (*Server)(nil)
+	_ core.Gate       = (*Server)(nil)
 )
 
-func New() *Server { return &Server{} }
+// New is a Server whose agent's own tools are named reserved: a client tool
+// with one of those names, or two with the same, is refused.
+func New(reserved ...string) *Server {
+	s := &Server{reserved: map[string]bool{}}
+	for _, name := range reserved {
+		s.reserved[name] = true
+	}
+	return s
+}
 
-// Serve speaks ACP on in and out until the client disconnects.
-func (s *Server) Serve(agent Agent, in io.Reader, out io.Writer) error {
+// Serve speaks ACP on in and out until the client disconnects, building the
+// session's agent with newAgent. The Connection is the SDK's, not an
+// AgentSideConnection: that one can't send the mcp/message requests client
+// tools need, so Server dispatches the requests itself (see handle).
+func (s *Server) Serve(newAgent NewAgent, in io.Reader, out io.Writer) error {
 	s.mu.Lock()
-	s.agent = agent
+	s.newAgent = newAgent
 	s.mu.Unlock()
-	conn := sdk.NewAgentSideConnection(s, out, in)
+	conn := sdk.NewConnection(s.handle, out, in)
 	s.mu.Lock()
 	s.conn = conn
 	s.mu.Unlock()
@@ -76,10 +113,10 @@ func (s *Server) Serve(agent Agent, in io.Reader, out io.Writer) error {
 }
 
 func (s *Server) Initialize(context.Context, sdk.InitializeRequest) (sdk.InitializeResponse, error) {
-	// Later slices turn on MCP-over-ACP and steering as they are built.
+	// Later slices turn on steering as they are built.
 	return sdk.InitializeResponse{
 		ProtocolVersion:   sdk.ProtocolVersionNumber,
-		AgentCapabilities: sdk.AgentCapabilities{LoadSession: true},
+		AgentCapabilities: sdk.AgentCapabilities{LoadSession: true, McpCapabilities: sdk.McpCapabilities{Acp: true}},
 	}, nil
 }
 
@@ -87,12 +124,17 @@ func (s *Server) Authenticate(context.Context, sdk.AuthenticateRequest) (sdk.Aut
 	return sdk.AuthenticateResponse{}, nil
 }
 
-func (s *Server) NewSession(context.Context, sdk.NewSessionRequest) (sdk.NewSessionResponse, error) {
+func (s *Server) NewSession(ctx context.Context, p sdk.NewSessionRequest) (sdk.NewSessionResponse, error) {
+	if err := s.beginStart(); err != nil {
+		return sdk.NewSessionResponse{}, err
+	}
+	defer s.endStart()
+	agent, err := s.buildAgent(ctx, p.McpServers)
+	if err != nil {
+		return sdk.NewSessionResponse{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.sessionID != "" {
-		return sdk.NewSessionResponse{}, sdk.NewInvalidRequest(map[string]any{"error": "this process already has a session"})
-	}
 	// Filename-safe: the session's file will be named after it.
 	var raw [16]byte
 	if _, err := rand.Read(raw[:]); err != nil {
@@ -109,45 +151,72 @@ func (s *Server) NewSession(context.Context, sdk.NewSessionRequest) (sdk.NewSess
 	if err != nil {
 		return sdk.NewSessionResponse{}, sdk.NewInternalError(map[string]any{"error": "create the session's file: " + err.Error()})
 	}
-	s.sessionID, s.path = sdk.SessionId(id), path
+	s.agent, s.sessionID, s.path = agent, sdk.SessionId(id), path
 	return sdk.NewSessionResponse{SessionId: s.sessionID}, nil
+}
+
+// beginStart claims the one session this process has, until endStart: the
+// client's tools are connected without s.mu held, as that waits on the client.
+func (s *Server) beginStart() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.sessionID != "" || s.starting {
+		return sdk.NewInvalidRequest(map[string]any{"error": "this process already has a session"})
+	}
+	s.starting = true
+	return nil
+}
+
+func (s *Server) endStart() {
+	s.mu.Lock()
+	s.starting = false
+	s.mu.Unlock()
+}
+
+// buildAgent connects the client's tools and builds the agent that has them.
+func (s *Server) buildAgent(ctx context.Context, servers []sdk.McpServer) (Agent, error) {
+	s.mu.Lock()
+	conn, newAgent := s.conn, s.newAgent
+	s.mu.Unlock()
+	tools, err := connectClientTools(ctx, conn, servers, s.reserved)
+	if err != nil {
+		return nil, sdk.NewInternalError(map[string]any{"error": err.Error()})
+	}
+	return newAgent(tools), nil
 }
 
 // LoadSession seeds the core with a saved session's kept turns and replays
 // what the client was shown of them, then answers.
-func (s *Server) LoadSession(_ context.Context, p sdk.LoadSessionRequest) (sdk.LoadSessionResponse, error) {
+func (s *Server) LoadSession(ctx context.Context, p sdk.LoadSessionRequest) (sdk.LoadSessionResponse, error) {
 	id := string(p.SessionId)
 	if !sessionIDPattern.MatchString(id) {
 		return sdk.LoadSessionResponse{}, sdk.NewInvalidParams(map[string]any{"error": "not a session id: " + id})
 	}
-	s.mu.Lock()
-	if s.sessionID != "" {
-		s.mu.Unlock()
-		return sdk.LoadSessionResponse{}, sdk.NewInvalidRequest(map[string]any{"error": "this process already has a session"})
+	if err := s.beginStart(); err != nil {
+		return sdk.LoadSessionResponse{}, err
 	}
-	saved, path, err := s.restore(id)
+	defer s.endStart()
+	agent, err := s.buildAgent(ctx, p.McpServers)
+	if err != nil {
+		return sdk.LoadSessionResponse{}, err
+	}
+	s.mu.Lock()
+	saved, path, err := s.restore(agent, id)
 	if err != nil {
 		s.mu.Unlock()
 		return sdk.LoadSessionResponse{}, err
 	}
-	s.sessionID, s.path, s.turns = p.SessionId, path, saved.lastTurn
+	s.agent, s.sessionID, s.path, s.turns = agent, p.SessionId, path, saved.lastTurn
 	s.mu.Unlock()
 
 	for _, d := range saved.shown {
-		switch d.Kind {
-		case displayPrompt:
-			s.update(sdk.UpdateUserMessageText(d.Text))
-		case displayReply:
-			s.update(sdk.UpdateAgentMessageText(d.Text))
-		default:
-			panic("display kind readSession let through: " + d.Kind)
-		}
+		s.update(d.update())
 	}
 	return sdk.LoadSessionResponse{}, nil
 }
 
-// restore reads session id and seeds the agent with it. s.mu must be held.
-func (s *Server) restore(id string) (saved, string, error) {
+// restore reads session id and seeds agent with it. s.mu must be held.
+func (s *Server) restore(agent Agent, id string) (saved, string, error) {
 	path, err := sessionPath(id)
 	if err != nil {
 		return saved{}, "", sdk.NewInternalError(map[string]any{"error": err.Error()})
@@ -159,7 +228,7 @@ func (s *Server) restore(id string) (saved, string, error) {
 	if err != nil {
 		return saved{}, "", sdk.NewInternalError(map[string]any{"error": "read session " + id + ": " + err.Error()})
 	}
-	if err := s.agent.Seed(got.messages); err != nil {
+	if err := agent.Seed(got.messages); err != nil {
 		return saved{}, "", sdk.NewInternalError(map[string]any{"error": "restore session " + id + ": " + err.Error()})
 	}
 	return got, path, nil
@@ -179,19 +248,16 @@ func (s *Server) save(records ...record) error {
 	return s.saveErr
 }
 
-// Keep saves a kept turn: the reply text it showed, then its messages.
+// Keep saves a kept turn: what it showed, then its messages.
 func (s *Server) Keep(messages []core.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.turn == nil {
 		panic("turn kept with no turn running")
 	}
-	var records []record
-	if s.turn.reply.Len() > 0 {
-		records = append(records, record{Turn: s.turn.n, Display: &display{Kind: displayReply, Text: s.turn.reply.String()}})
-	}
+	s.flushReply()
 	// A failure is logged and refuses the next prompt; this turn still ends.
-	_ = s.save(append(records, record{Turn: s.turn.n, Messages: messages})...)
+	_ = s.save(append(s.turn.records, record{Turn: s.turn.n, Messages: messages})...)
 }
 
 func (s *Server) Prompt(_ context.Context, p sdk.PromptRequest) (sdk.PromptResponse, error) {
@@ -209,7 +275,7 @@ func (s *Server) Prompt(_ context.Context, p sdk.PromptRequest) (sdk.PromptRespo
 		return sdk.PromptResponse{}, sdk.NewInvalidRequest(map[string]any{"error": "a turn is already running"})
 	}
 	s.turns++
-	t := &turn{n: s.turns}
+	t := &turn{n: s.turns, summaries: map[string]string{}}
 	// Refused when the session can't be saved: it couldn't be resumed.
 	if err := s.save(record{Turn: t.n, Display: &display{Kind: displayPrompt, Text: text}}); err != nil {
 		s.mu.Unlock()
@@ -282,6 +348,29 @@ func (s *Server) Show(agent int, event core.Event) {
 		s.turn.reply.WriteString(e.Text)
 		s.mu.Unlock()
 		s.update(sdk.UpdateAgentMessageText(e.Text))
+	case core.ToolStarted:
+		input := e.Input
+		if !json.Valid(input) { // the model wrote it; the session file must stay readable
+			input = nil
+		}
+		d := display{Kind: displayToolStart, ToolID: e.ID, Name: e.Name, Summary: e.Summary, Input: input}
+		s.mu.Lock()
+		if s.turn == nil {
+			panic("tool started with no turn running")
+		}
+		s.turn.summaries[e.ID] = e.Summary
+		s.shown(d)
+		s.mu.Unlock()
+		s.update(d.update())
+	case core.ToolFinished:
+		d := display{Kind: displayToolEnd, ToolID: e.ID, Text: e.Output, Failed: e.IsError}
+		s.mu.Lock()
+		if s.turn == nil {
+			panic("tool finished with no turn running")
+		}
+		s.shown(d)
+		s.mu.Unlock()
+		s.update(d.update())
 	case core.TurnDiscarded:
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -290,6 +379,106 @@ func (s *Server) Show(agent int, event core.Event) {
 		}
 		s.turn.discarded, s.turn.reason = true, e.Reason
 	}
+}
+
+// Allow asks the client whether a tool call may run. A call is allowed only
+// by the client selecting the allow option; anything else, from a denial to
+// a failed request, stops it.
+func (s *Server) Allow(ctx context.Context, call core.ToolCall) (bool, string) {
+	s.mu.Lock()
+	conn, id := s.conn, s.sessionID
+	if s.turn == nil {
+		panic("tool call gated with no turn running")
+	}
+	title := s.turn.summaries[call.ID]
+	s.mu.Unlock()
+	kind := toolKind(call.Name)
+	req := sdk.RequestPermissionRequest{
+		SessionId: id,
+		ToolCall: sdk.ToolCallUpdate{
+			ToolCallId: sdk.ToolCallId(call.ID),
+			Title:      &title,
+			Kind:       &kind,
+			RawInput:   rawInput(call.Input),
+			Meta:       map[string]any{"toolName": call.Name},
+		},
+		Options: []sdk.PermissionOption{
+			{OptionId: optionAllow, Name: "Allow", Kind: sdk.PermissionOptionKindAllowOnce},
+			{OptionId: optionReject, Name: "Deny", Kind: sdk.PermissionOptionKindRejectOnce},
+		},
+	}
+	resp, err := sdk.SendRequest[sdk.RequestPermissionResponse](conn, ctx, sdk.ClientMethodSessionRequestPermission, req)
+	switch {
+	case ctx.Err() != nil:
+		return false, "cancelled"
+	case err != nil:
+		return false, "permission request failed: " + err.Error()
+	case resp.Outcome.Selected == nil:
+		return false, "cancelled"
+	case resp.Outcome.Selected.OptionId == optionAllow:
+		s.update(sdk.UpdateToolCall(sdk.ToolCallId(call.ID), sdk.WithUpdateStatus(sdk.ToolCallStatusInProgress)))
+		return true, ""
+	case resp.Outcome.Selected.OptionId == optionReject:
+		return false, "denied by the user"
+	}
+	// An option we never offered: not an allow.
+	return false, "the client answered with an unknown option " + string(resp.Outcome.Selected.OptionId)
+}
+
+const (
+	optionAllow  sdk.PermissionOptionId = "allow"
+	optionReject sdk.PermissionOptionId = "reject"
+)
+
+// toolKind is the ACP kind of a grimalkin tool, by the name the model uses.
+func toolKind(name string) sdk.ToolKind {
+	switch name {
+	case "shell":
+		return sdk.ToolKindExecute
+	case "search":
+		return sdk.ToolKindSearch
+	case "web_search", "web_fetch":
+		return sdk.ToolKindFetch
+	case core.SkillToolName:
+		return sdk.ToolKindRead
+	}
+	return sdk.ToolKindOther
+}
+
+// rawInput is a tool call's input for the wire, or nil when it has none.
+func rawInput(input json.RawMessage) any {
+	if len(input) == 0 {
+		return nil
+	}
+	return input
+}
+
+// update is what the client is sent for a thing it was shown, live or on
+// replay. A tool's start is pending until the client allows it.
+func (d display) update() sdk.SessionUpdate {
+	switch d.Kind {
+	case displayPrompt:
+		return sdk.UpdateUserMessageText(d.Text)
+	case displayReply:
+		return sdk.UpdateAgentMessageText(d.Text)
+	case displayToolStart:
+		return sdk.StartToolCall(sdk.ToolCallId(d.ToolID), d.Summary,
+			sdk.WithStartKind(toolKind(d.Name)),
+			sdk.WithStartStatus(sdk.ToolCallStatusPending),
+			sdk.WithStartRawInput(rawInput(d.Input)),
+			func(tc *sdk.SessionUpdateToolCall) { tc.Meta = map[string]any{"toolName": d.Name} })
+	case displayToolEnd:
+		status := sdk.ToolCallStatusCompleted
+		if d.Failed {
+			status = sdk.ToolCallStatusFailed
+		}
+		opts := []sdk.ToolCallUpdateOpt{sdk.WithUpdateStatus(status)}
+		if d.Text != "" {
+			opts = append(opts, sdk.WithUpdateContent([]sdk.ToolCallContent{sdk.ToolContent(sdk.TextBlock(d.Text))}))
+		}
+		return sdk.UpdateToolCall(sdk.ToolCallId(d.ToolID), opts...)
+	}
+	panic("display kind readSession let through: " + d.Kind)
 }
 
 func (s *Server) update(u sdk.SessionUpdate) {
@@ -301,33 +490,7 @@ func (s *Server) update(u sdk.SessionUpdate) {
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	if err := conn.SessionUpdate(context.Background(), sdk.SessionNotification{SessionId: id, Update: u}); err != nil {
+	if err := conn.SendNotification(context.Background(), sdk.ClientMethodSessionUpdate, sdk.SessionNotification{SessionId: id, Update: u}); err != nil {
 		log.Print(fmt.Errorf("acp: session/update: %w", err))
 	}
-}
-
-// Not supported in this slice.
-
-func (s *Server) SetSessionMode(context.Context, sdk.SetSessionModeRequest) (sdk.SetSessionModeResponse, error) {
-	return sdk.SetSessionModeResponse{}, sdk.NewMethodNotFound(sdk.AgentMethodSessionSetMode)
-}
-
-func (s *Server) SetSessionConfigOption(context.Context, sdk.SetSessionConfigOptionRequest) (sdk.SetSessionConfigOptionResponse, error) {
-	return sdk.SetSessionConfigOptionResponse{}, sdk.NewMethodNotFound(sdk.AgentMethodSessionSetConfigOption)
-}
-
-func (s *Server) ListSessions(context.Context, sdk.ListSessionsRequest) (sdk.ListSessionsResponse, error) {
-	return sdk.ListSessionsResponse{}, sdk.NewMethodNotFound(sdk.AgentMethodSessionList)
-}
-
-func (s *Server) ResumeSession(context.Context, sdk.ResumeSessionRequest) (sdk.ResumeSessionResponse, error) {
-	return sdk.ResumeSessionResponse{}, sdk.NewMethodNotFound(sdk.AgentMethodSessionResume)
-}
-
-func (s *Server) CloseSession(context.Context, sdk.CloseSessionRequest) (sdk.CloseSessionResponse, error) {
-	return sdk.CloseSessionResponse{}, sdk.NewMethodNotFound(sdk.AgentMethodSessionClose)
-}
-
-func (s *Server) Logout(context.Context, sdk.LogoutRequest) (sdk.LogoutResponse, error) {
-	return sdk.LogoutResponse{}, sdk.NewMethodNotFound(sdk.AgentMethodLogout)
 }

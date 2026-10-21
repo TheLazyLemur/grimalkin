@@ -20,7 +20,8 @@ internal/adapters/
                           rendering arguments, variables and !`cmd`
   clipboard/              outbound: tui.Clipboard via pbcopy
   acp/                    inbound: ACP agent over stdio (`grimalkin acp`);
-                          drives the core via acp.Agent, is its Transcript
+                          drives the core via acp.Agent, is its Transcript,
+                          History and Gate
   tui/                    inbound: Ultraviolet UI, editor, navigation,
                           markdown; drives the core via tui.Agent
 scripts/check-imports.sh  enforces the import rules
@@ -65,7 +66,11 @@ A response's tool calls run at the same time and their results go back in
 call order, so a tool's methods and `Transcript.Show` are called from several
 goroutines at once. Skill tool calls are the exception: they run first and
 one at a time, because each is deduplicated against the ones before it.
-Cancelling the turn cancels every running call. A panic in one call cancels
+Cancelling the turn cancels every running call. An agent with a `Gate` set
+(optional; the TUI sets none, children never have one) asks it after a call's
+`ToolStarted` and before the tool runs; a call it refuses doesn't run, and the
+model gets the reason as an error result. The gate may block until the turn's
+context is cancelled, which ends the call as a cancelled run does. A panic in one call cancels
 the others and is raised again from `RunTurn`, with the call's stack in its
 message.
 
@@ -85,27 +90,55 @@ maps a provider's wire to its adapter; an entry on a wire it doesn't know is
 a startup error naming the entry.
 
 **ACP.** `acp.Server` (`internal/adapters/acp`) is the second driver of the
-core, beside the TUI, and implements `core.Transcript` itself: `main.go` wires
-it as the `core.Agent`'s transcript, then calls `Serve(agent, stdin, stdout)`.
-One session per process. A `session/prompt` starts a turn with `StartTurn`,
+core, beside the TUI, and implements `core.Transcript`, `core.History` and
+`core.Gate` itself: `main.go` wires it as the `core.Agent`'s transcript,
+history and gate, then calls `Serve(newAgent, stdin, stdout)`; `newAgent`
+builds the agent at `session/new` or `session/load`, once the client's tools
+are known. The server speaks on the SDK's `Connection` and dispatches the
+requests itself (`rpc.go`), because an `AgentSideConnection` keeps its
+connection private and the `mcp/message` requests below can't be sent
+without it. One session per process. A `session/prompt` starts a turn with `StartTurn`,
 so a `session/cancel` that arrives straight away still reaches it, and runs it
 on the request's goroutine and answers when it returns: `end_turn`, `cancelled` if
 `session/cancel` came in meanwhile, or an error carrying the reason of a
 `TurnDiscarded`. The adapter enforces one turn at a time, since the core has
-no busy guard. `ReplyText` becomes `agent_message_chunk`; other events are
-not shown yet. For now the agent has no tools at all.
+no busy guard. `ReplyText` becomes `agent_message_chunk`, `ToolStarted` a
+`tool_call` (pending; the tool's name goes in `_meta.toolName`, its kind is
+mapped from the name in `toolKind`, so a new tool that isn't `other` is added
+there) and `ToolFinished` a `tool_call_update`; other events are not shown.
+The agent has the TUI's tools and skills, never the `agent` tool, and
+`Allow` is the gate: it sends `session/request_permission` and blocks on the
+answer, returning once the turn's context is done. Only the client selecting
+`allow` runs a call.
+
+**Client tools** (`mcp.go`) come from `type: "acp"` entries of `mcpServers`;
+other transports are skipped with a note on stderr. For each, before
+`session/new` or `session/load` answers, the server sends `mcp/connect`
+(`{"acpId": <the entry's id>}`), then MCP `initialize`, `notifications/initialized`
+and `tools/list` as `mcp/message` (`{connectionId, method, params}`), sent with
+`sdk.SendRequest` on the connection. Each listed tool becomes a `core.Tool`
+that runs as `tools/call`; its text blocks are the result, and `isError` makes
+it an error. A tool whose name isn't API-safe, or is the name of the agent's
+own tools (the names `acp.New` is given) or of another client tool, fails the
+session start. The SDK's client side doesn't dispatch an inbound `mcp/message`
+(only `mcp/connect`), so the tests route those lines past it (`serveMcp`).
 
 The server is also the agent's `History`, and saves the session
 (`store.go`) as one JSONL file named by its id under
 `$XDG_STATE_HOME/grimalkin/sessions/` (dir 0700, file 0600), created at
 `session/new` and only ever appended to. Each record carries its turn's
 number and is either a display record, what the client was shown (the
-prompt when the turn starts, the reply text joined when it is kept), or the
-turn's messages from `History.Keep`. A turn with no messages record was
-discarded or never finished. `session/load` takes only an id of the shape
+prompt when the turn starts; then, when the turn is kept, its reply text and
+tool calls in the order they were shown), or the turn's messages from
+`History.Keep`. A turn with no messages record was discarded or never
+finished. Display kinds are `prompt`, `reply`, `tool_start`
+(`tool_id`, `name`, `summary`, `input`) and `tool_end` (`tool_id`, `text`,
+`failed`). A last line that isn't JSON is a write the process died in:
+`readSession` cuts it off the file and loads the rest; a bad line anywhere
+else fails the load. `session/load` takes only an id of the shape
 `session/new` makes, seeds the agent with every messages record, replays
-the display records of kept turns as `user_message_chunk` and
-`agent_message_chunk`, and numbers new turns after the file's last. The
+the display records of kept turns as `user_message_chunk`,
+`agent_message_chunk`, `tool_call` and `tool_call_update`, and numbers new turns after the file's last. The
 first failed write is logged and makes every later prompt answer an error. Tests drive the adapter
 with the SDK's client side over `io.Pipe`. Spec: `docs/specs/acp.md`.
 

@@ -285,3 +285,37 @@ func TestAssistantContentThatIsNotAMessageFailsTheCall(t *testing.T) {
 		t.Errorf("err = %v, want one naming message 1", err)
 	}
 }
+
+func TestANonStrictToolIsSentWithoutStrictAndADefaultToolStaysStrict(t *testing.T) {
+	// given
+	// ... a request offering a client's non-strict tool and a default tool
+	url, bodyRef, _ := serve(t, toolUseSSE)
+	p := New(Config{BaseURL: url, APIKey: "test-key", Model: "m", MaxTokens: 100, Thinking: "disabled"})
+	req := core.ModelRequest{
+		Tools: []core.ToolSpec{
+			{Name: "greet", InputSchema: `{"type":"object"}`, NonStrict: true},
+			{Name: "shell", InputSchema: `{"type":"object","additionalProperties":false}`},
+		},
+		Messages: []core.Message{{Role: core.RoleUser, Text: "hi"}},
+	}
+
+	// when
+	// ... the request is streamed
+	_, err := p.Stream(context.Background(), req, func(string) {})
+
+	// then
+	// ... only the default tool carries strict: true
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire wireRequest
+	if err := json.Unmarshal(*bodyRef, &wire); err != nil {
+		t.Fatalf("request body: %v\n%s", err, *bodyRef)
+	}
+	if got := wire.Tools[0]["strict"]; got == true {
+		t.Errorf("greet strict = %v, want not true", got)
+	}
+	if got := wire.Tools[1]["strict"]; got != true {
+		t.Errorf("shell strict = %v, want true", got)
+	}
+}

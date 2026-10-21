@@ -1,5 +1,7 @@
 package core
 
+import "encoding/json"
+
 // Event is something to show in a transcript. The number of the agent it
 // belongs to is passed beside it, to Transcript.Show.
 type Event interface{ isEvent() }
@@ -12,6 +14,7 @@ type ReplyText struct{ Text string }
 
 type ToolStarted struct {
 	ID, Name, Summary string
+	Input             json.RawMessage // the call's, as the model wrote it
 }
 
 type ToolFinished struct {

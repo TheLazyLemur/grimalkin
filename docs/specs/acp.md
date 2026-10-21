@@ -84,7 +84,9 @@ The TUI is unchanged. The protocol lives in a new driving adapter beside it.
   - Every tool call goes through `session/request_permission` before it runs,
     carrying the tool's name and input. That includes the client's own tools.
   - A denial goes to the model as an error result.
-  - The gate is a decorator around each `core.Tool`, in the adapter.
+  - The gate is the core's `Gate` port, which the core asks between
+    `ToolStarted` and running the tool, with the call's id, name and input.
+    The adapter implements it.
   - grimalkin applies no permission modes and offers no `mode` option; the
     client owns that policy.
   - Rejected: skipping the gate for the client's own tools. The "always fine"
@@ -189,8 +191,8 @@ The TUI is unchanged. The protocol lives in a new driving adapter beside it.
 
 ## Open Questions
 
-- Should tool output stream in `tool_call_update`? The core's `ToolFinished`
-  carries output only at the end.
+- Should tool output stream in `tool_call_update`? Slice 3 sends it only at the
+  end, as the core's `ToolFinished` carries it.
 - What does a `model` change mid-turn do: apply from the next model call, or be
   refused until the turn ends?
 ## Out of Scope
@@ -198,6 +200,12 @@ The TUI is unchanged. The protocol lives in a new driving adapter beside it.
 - The `agent` tool and children under ACP, including the draft subagents RFD.
 - Stdio, HTTP and SSE MCP servers.
 - Permission modes in grimalkin, and a sandbox for its shell.
+  - Later: grimalkin's own `auto` mode, as Claude Code has. grimalkin would
+    advertise `auto` in a `mode` config option and classify each call, sending
+    `request_permission` only for calls it won't approve itself. hearth would
+    then hand `auto` to the agent instead of always asking, as it does now for
+    ACP agents. It depends on the sandbox: the wishlist makes a sandbox the
+    prerequisite for any auto-approve.
 - A flag to turn off built-in tools in favour of the client's.
 - Unqueue, rewind and fork.
 

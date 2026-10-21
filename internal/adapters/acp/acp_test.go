@@ -1,6 +1,7 @@
 package acp_test
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -26,8 +27,9 @@ type scriptedModel struct {
 }
 
 type modelReply struct {
-	chunks []string // streamed before the response
-	err    error    // non-nil: the call fails with this error
+	chunks []string        // streamed before the response
+	calls  []core.ToolCall // non-empty: the response asks for these tools
+	err    error           // non-nil: the call fails with this error
 	// hold, when set, runs once the call has started and may block: it gets
 	// the call's context, and a non-nil error from it fails the call.
 	hold func(ctx context.Context) error
@@ -54,6 +56,9 @@ func (m *scriptedModel) Stream(ctx context.Context, req core.ModelRequest, onTex
 	if reply.err != nil {
 		return core.ModelResponse{}, reply.err
 	}
+	if len(reply.calls) > 0 {
+		return core.ModelResponse{StopReason: core.StopToolUse, ToolCalls: reply.calls, Content: json.RawMessage(`"assistant"`)}, nil
+	}
 	return core.ModelResponse{StopReason: core.StopEndTurn, Content: json.RawMessage(`"assistant"`)}, nil
 }
 
@@ -63,13 +68,110 @@ func (m *scriptedModel) sent() []core.ModelRequest {
 	return slices.Clone(m.requests)
 }
 
-// recordingClient is the ACP client side: it records every session update.
-// Any other client method panics, since slice 1 has no use for one.
+// recordingClient is the ACP client side: it records every session update and
+// permission request, and answers a request as answer says. Any other client
+// method panics.
 type recordingClient struct {
 	sdk.Client
 
-	mu      sync.Mutex
-	updates []sdk.SessionNotification
+	mu       sync.Mutex
+	updates  []sdk.SessionNotification
+	requests []sdk.RequestPermissionRequest
+	answer   func(ctx context.Context, req sdk.RequestPermissionRequest) (sdk.RequestPermissionResponse, error)
+
+	// MCP-over-ACP: the client's servers. connect answers mcp/connect, and
+	// mcp answers each mcp/message request; both default to succeeding.
+	connect  func(acpID string) (string, error)
+	mcp      func(connectionID, method string, params map[string]any) (any, error)
+	connects []string
+	messages []mcpMessage
+}
+
+// mcpMessage is an mcp/message the agent sent.
+type mcpMessage struct {
+	connectionID, method string
+	params               map[string]any
+}
+
+func (c *recordingClient) UnstableConnectMcp(_ context.Context, req sdk.UnstableConnectMcpRequest) (sdk.UnstableConnectMcpResponse, error) {
+	c.mu.Lock()
+	c.connects = append(c.connects, string(req.AcpId))
+	connect := c.connect
+	c.mu.Unlock()
+	if connect == nil {
+		return sdk.UnstableConnectMcpResponse{ConnectionId: sdk.UnstableMcpConnectionId("conn-" + req.AcpId)}, nil
+	}
+	id, err := connect(string(req.AcpId))
+	return sdk.UnstableConnectMcpResponse{ConnectionId: sdk.UnstableMcpConnectionId(id)}, err
+}
+
+// mcpMethods is the method of each mcp/message the agent sent, in order.
+func (c *recordingClient) mcpMethods() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var methods []string
+	for _, m := range c.messages {
+		methods = append(methods, m.method)
+	}
+	return methods
+}
+
+// serveMcp is the plumbing the SDK's client side lacks: it doesn't dispatch
+// an inbound mcp/message to the Client, so the lines the agent writes pass
+// through here first. An mcp/message is answered by got.mcp, straight onto
+// toAgent; everything else goes on to the SDK's client.
+func (c *recordingClient) serveMcp(fromAgent io.Reader, toClient io.WriteCloser, toAgent io.Writer) {
+	defer toClient.Close()
+	lines := bufio.NewReader(fromAgent)
+	for {
+		line, err := lines.ReadBytes('\n')
+		if err != nil {
+			return
+		}
+		var msg struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+			Params struct {
+				ConnectionId string         `json:"connectionId"`
+				Method       string         `json:"method"`
+				Params       map[string]any `json:"params"`
+			} `json:"params"`
+		}
+		if json.Unmarshal(line, &msg) != nil || msg.Method != sdk.ClientMethodMcpMessage {
+			_, _ = toClient.Write(line)
+			continue
+		}
+		c.mu.Lock()
+		c.messages = append(c.messages, mcpMessage{msg.Params.ConnectionId, msg.Params.Method, msg.Params.Params})
+		answer := c.mcp
+		c.mu.Unlock()
+		if msg.ID == nil { // a notification
+			continue
+		}
+		reply := map[string]any{"jsonrpc": "2.0", "id": msg.ID}
+		if result, err := answer(msg.Params.ConnectionId, msg.Params.Method, msg.Params.Params); err != nil {
+			reply["error"] = map[string]any{"code": -32603, "message": err.Error()}
+		} else {
+			reply["result"] = result
+		}
+		out, _ := json.Marshal(reply)
+		_, _ = toAgent.Write(append(out, '\n'))
+	}
+}
+
+func (c *recordingClient) RequestPermission(ctx context.Context, req sdk.RequestPermissionRequest) (sdk.RequestPermissionResponse, error) {
+	c.mu.Lock()
+	c.requests = append(c.requests, req)
+	answer := c.answer
+	c.mu.Unlock()
+	return answer(ctx, req)
+}
+
+// answerWith sets how permission requests are answered.
+func (c *recordingClient) answerWith(answer func(ctx context.Context, req sdk.RequestPermissionRequest) (sdk.RequestPermissionResponse, error)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.answer = answer
 }
 
 func (c *recordingClient) SessionUpdate(_ context.Context, n sdk.SessionNotification) error {
@@ -102,27 +204,47 @@ type session struct {
 // in a new state directory.
 func newSession(t *testing.T, replies ...modelReply) *session {
 	t.Helper()
+	return newToolSession(t, nil, replies...)
+}
+
+// newToolSession is newSession with tools for the model.
+func newToolSession(t *testing.T, tools []core.Tool, replies ...modelReply) *session {
+	t.Helper()
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	return connect(t, replies...)
+	return connectTools(t, tools, replies...)
 }
 
 // connect connects a client to a fresh adapter and core.Agent, as a new
 // process would be, on the state directory the test already set.
 func connect(t *testing.T, replies ...modelReply) *session {
 	t.Helper()
+	return connectTools(t, nil, replies...)
+}
+
+func connectTools(t *testing.T, tools []core.Tool, replies ...modelReply) *session {
+	t.Helper()
 	model := &scriptedModel{replies: replies}
-	server := acp.New()
-	agent := &core.Agent{Model: model, Transcript: server, History: server, System: "system"}
+	reserved := []string{core.SkillToolName, core.AgentToolName}
+	for _, tool := range tools {
+		reserved = append(reserved, tool.Spec().Name)
+	}
+	server := acp.New(reserved...)
+	newAgent := func(clientTools []core.Tool) acp.Agent {
+		all := append(slices.Clone(tools), clientTools...)
+		return &core.Agent{Model: model, Transcript: server, History: server, Gate: server, Tools: all, System: "system"}
+	}
 
 	toAgentR, toAgentW := io.Pipe()
 	toClientR, toClientW := io.Pipe()
+	filteredR, filteredW := io.Pipe()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = server.Serve(agent, toAgentR, toClientW)
+		_ = server.Serve(newAgent, toAgentR, toClientW)
 	}()
 	got := &recordingClient{}
-	client := sdk.NewClientSideConnection(got, toAgentW, toClientR)
+	go got.serveMcp(toClientR, filteredW, toAgentW)
+	client := sdk.NewClientSideConnection(got, toAgentW, filteredR)
 	t.Cleanup(func() {
 		_ = toAgentW.Close()
 		_ = toClientW.Close()
@@ -194,7 +316,7 @@ func await[T any](t *testing.T, ch <-chan T) T {
 	}
 }
 
-func TestInitializeAdvertisesLoadSessionOnly(t *testing.T) {
+func TestInitializeAdvertisesLoadSessionAndMcpOverAcp(t *testing.T) {
 	// given
 	// ... a client connected to the adapter
 	s := newSession(t)
@@ -204,13 +326,13 @@ func TestInitializeAdvertisesLoadSessionOnly(t *testing.T) {
 	resp := s.initialize(t)
 
 	// then
-	// ... protocol version 1 with loadSession, but no MCP-over-ACP and no steering
+	// ... protocol version 1 with loadSession and MCP-over-ACP, but no steering
 	if resp.ProtocolVersion != 1 {
 		t.Errorf("protocolVersion = %d, want 1", resp.ProtocolVersion)
 	}
 	caps := resp.AgentCapabilities
-	if !caps.LoadSession || caps.McpCapabilities.Acp || caps.Meta != nil {
-		t.Errorf("capabilities = %+v, want loadSession only", caps)
+	if !caps.LoadSession || !caps.McpCapabilities.Acp || caps.McpCapabilities.Http || caps.McpCapabilities.Sse || caps.Meta != nil {
+		t.Errorf("capabilities = %+v, want loadSession and mcpCapabilities.acp only", caps)
 	}
 }
 

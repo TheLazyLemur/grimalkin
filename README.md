@@ -7,6 +7,15 @@ works with Claude or any compatible endpoint (e.g. Ollama). It renders with
 Ultraviolet and has a shell, [search](#search), [web](#web) tools,
 [skills](#skills) and [subagents](#subagents).
 
+The client can offer its own tools too: a `session/new` or `session/load`
+`mcpServers` entry of `type: "acp"` is an MCP server the client answers over
+the ACP connection itself (the draft in acp-go-sdk v0.13.5: `mcp/connect`,
+then `mcp/message`). Its tools are listed before the session starts and
+offered to the model beside grimalkin's own, each behind the same permission
+request. A tool named like one of grimalkin's, or like another of the
+client's, fails the session start. Servers of other types (stdio, http, sse)
+are not supported and are ignored, with a note on stderr.
+
 > **Warning:** the shell is **unsandboxed**. Every command the model chooses
 > runs as `/bin/sh -c` in the current directory, with your permissions and no
 > timeout.
@@ -305,17 +314,30 @@ In the session's buffer, `Ctrl-C` stops the turn and every subagent it started.
 
 `grimalkin acp` runs grimalkin as an [Agent Client Protocol](https://agentclientprotocol.com)
 agent on stdin and stdout instead of the TUI, from the same config. It is
-work in progress: one session per process, and one text turn at a time with
-no tools (no shell, search, web or skills) until the permission gate exists.
+work in progress: one session per process, and one turn at a time.
 Reply text streams as `agent_message_chunk` updates. `session/cancel` stops a
 turn, and a turn that fails answers `session/prompt` with an error.
+
+The model gets the same tools as in the TUI (the shell, and search, web and
+skills when configured) but never the `agent` tool. Each call is announced
+as a `tool_call` update (`kind`, `rawInput`, and the tool's name in
+`_meta.toolName`) and then waits on a `session/request_permission` to the
+client, with `allow_once` and `reject_once` options. Only the client's
+allow runs it; a denial, an error or a cancel does not, and the model gets
+a denial as an error result. The call then goes `in_progress` and ends in a
+`tool_call_update` that is `completed` or `failed`, with the output.
+
+> **Warning:** the shell is **unsandboxed**, and the client's answers are
+> all that stand between the model and it. A client that approves every
+> request gives the model your shell.
 
 Each session is saved as it goes, to
 `$XDG_STATE_HOME/grimalkin/sessions/<sessionId>.jsonl` (by default
 `~/.local/state/grimalkin/sessions/`), readable by you alone since it holds
 the whole conversation. `session/load` with that id, in a new process,
-replays the session's finished turns (prompt and reply text) and continues
-it; a cancelled or failed turn is neither replayed nor remembered. If a
+replays the session's finished turns (prompts, replies and tool calls) and
+continues it; a session file whose last line is torn, from a process that
+died mid-write, loads without that line; a cancelled or failed turn is neither replayed nor remembered. If a
 write fails, the error goes to stderr and every later prompt is refused, as
 the session could no longer be resumed. The other capabilities are not
 advertised yet. stdout

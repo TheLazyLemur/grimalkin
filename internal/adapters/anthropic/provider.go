@@ -147,7 +147,7 @@ func (p *Provider) buildParams(req core.ModelRequest) (anthropic.MessageNewParam
 		params.Tools = append(params.Tools, anthropic.ToolUnionParam{OfTool: &anthropic.ToolParam{
 			Name:        tool.Name,
 			Description: anthropic.String(tool.Description),
-			Strict:      anthropic.Bool(true),
+			Strict:      anthropic.Bool(!tool.NonStrict),
 			InputSchema: schema,
 		}})
 	}

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"slices"
 	"strings"
 
 	"grimalkin/internal/adapters/acp"
@@ -99,19 +100,43 @@ func main() {
 	os.Exit(0)
 }
 
-// runACP serves one ACP session on stdin and stdout, with no tools: the
-// permission gate that must stand in front of them is not built yet. stdout
-// carries protocol messages only, so nothing is printed to it here. The
-// server saves the session's kept turns as the agent's History.
-func runACP(model core.Model, cwd string) error {
-	server := acp.New()
-	agent := &core.Agent{
+// acpAgent is the agent an ACP session drives, with server as its transcript,
+// history and gate. It has the same tools and skills as the TUI's, and the
+// client's tools, but not the agent tool or children: SubagentTools stays
+// nil. Every tool call waits on the client's permission through the gate.
+func acpAgent(model core.Model, catalogue, clientTools []core.Tool, library *skills.Library, cwd string, server *acp.Server) *core.Agent {
+	return &core.Agent{
 		Model:      model,
 		Transcript: server,
 		History:    server,
-		System:     core.SystemPrompt(osName(), cwd, nil),
+		Gate:       server,
+		System:     core.SystemPrompt(osName(), cwd, library.List()),
+		Tools:      append(slices.Clone(catalogue), clientTools...),
+		Skills:     library,
 	}
-	return server.Serve(agent, os.Stdin, os.Stdout)
+}
+
+// runACP serves one ACP session on stdin and stdout. stdout carries protocol
+// messages only, so nothing is printed to it here. The repo map is not built
+// at startup, as nothing would announce it.
+func runACP(model core.Model, sel config.Selection, cwd string) error {
+	library, warnings, err := skills.Load(sel.SkillDirs, cwd)
+	if err != nil {
+		return err
+	}
+	for _, w := range warnings {
+		fmt.Fprintln(os.Stderr, w)
+	}
+	catalogue, _ := toolCatalogue(sel, cwd)
+	// A client tool may not take the name of one of these, or the core's.
+	reserved := []string{core.SkillToolName, core.AgentToolName}
+	for _, tool := range catalogue {
+		reserved = append(reserved, tool.Spec().Name)
+	}
+	server := acp.New(reserved...)
+	return server.Serve(func(clientTools []core.Tool) acp.Agent {
+		return acpAgent(model, catalogue, clientTools, library, cwd, server)
+	}, os.Stdin, os.Stdout)
 }
 
 func run() error {
@@ -146,7 +171,7 @@ func run() error {
 		return fmt.Errorf("get working directory: %w", err)
 	}
 	if acpMode {
-		return runACP(model, cwd)
+		return runACP(model, sel, cwd)
 	}
 
 	library, warnings, err := skills.Load(sel.SkillDirs, cwd)

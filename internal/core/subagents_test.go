@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -512,11 +513,11 @@ func TestAChildsEventsReportItsNumberBetweenItsStartAndEnd(t *testing.T) {
 	// ... the child's turn events carry its number, inside lifecycle events shown as the parent's
 	want := []Event{
 		ReplyStarted{},
-		ToolStarted{ID: "toolu_1", Name: AgentToolName, Summary: `agent {"task":"find the bug"}`},
+		ToolStarted{ID: "toolu_1", Name: AgentToolName, Summary: `agent {"task":"find the bug"}`, Input: json.RawMessage(`{"task":"find the bug"}`)},
 		ChildStarted{Child: 1, Model: parentModelName},
 		ReplyStarted{},
 		ReplyText{Text: "looking"},
-		ToolStarted{ID: "toolu_c1", Name: "shell", Summary: "shell {}"},
+		ToolStarted{ID: "toolu_c1", Name: "shell", Summary: "shell {}", Input: json.RawMessage(`{}`)},
 		ChildProgress{Child: 1, Tools: 1},
 		ToolFinished{ID: "toolu_c1", Output: "ok"},
 		ReplyStarted{},
@@ -526,7 +527,7 @@ func TestAChildsEventsReportItsNumberBetweenItsStartAndEnd(t *testing.T) {
 		ReplyStarted{},
 	}
 	wantAgents := []int{0, 0, 0, 1, 1, 1, 0, 1, 1, 1, 0, 0, 0}
-	if !slices.Equal(transcript.events, want) {
+	if !reflect.DeepEqual(transcript.events, want) {
 		t.Errorf("events = %#v\nwant %#v", transcript.events, want)
 	}
 	if !slices.Equal(transcript.agents, wantAgents) {
@@ -845,7 +846,7 @@ func TestAUserTurnOnAFinishedChildFollowsItsHistoryUnderItsNumberWithItsOwnStatu
 	wantEvents := []Event{
 		ChildStarted{Child: 1, Model: parentModelName},
 		ReplyStarted{},
-		ToolStarted{ID: "toolu_c1", Name: "shell", Summary: "shell {}"},
+		ToolStarted{ID: "toolu_c1", Name: "shell", Summary: "shell {}", Input: json.RawMessage(`{}`)},
 		ChildProgress{Child: 1, Tools: 1},
 		ToolFinished{ID: "toolu_c1", Output: "ok"},
 		ReplyStarted{},
@@ -853,7 +854,7 @@ func TestAUserTurnOnAFinishedChildFollowsItsHistoryUnderItsNumberWithItsOwnStatu
 		ChildFinished{Child: 1},
 	}
 	wantAgents := []int{0, 1, 1, 0, 1, 1, 1, 0}
-	if got := transcript.events[shown:]; !slices.Equal(got, wantEvents) {
+	if got := transcript.events[shown:]; !reflect.DeepEqual(got, wantEvents) {
 		t.Errorf("events = %#v\nwant %#v", got, wantEvents)
 	}
 	if got := transcript.agents[shown:]; !slices.Equal(got, wantAgents) {
@@ -1468,12 +1469,12 @@ func TestAForksAgentCallIsAnsweredWithAnErrorAndStartsNothing(t *testing.T) {
 	}
 	wantShown := []Event{
 		ReplyStarted{},
-		ToolStarted{ID: "toolu_f1", Name: AgentToolName, Summary: `agent {"task":"dig"}`},
+		ToolStarted{ID: "toolu_f1", Name: AgentToolName, Summary: `agent {"task":"dig"}`, Input: json.RawMessage(`{"task":"dig"}`)},
 		ToolFinished{ID: "toolu_f1", Output: "subagents can't start subagents", IsError: true},
 		ReplyStarted{},
 		ReplyText{Text: "looks fine"},
 	}
-	if got := transcript.eventsOf(1); !slices.Equal(got, wantShown) {
+	if got := transcript.eventsOf(1); !reflect.DeepEqual(got, wantShown) {
 		t.Errorf("fork's events = %#v\nwant %#v", got, wantShown)
 	}
 }
