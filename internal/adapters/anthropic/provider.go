@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -160,6 +161,12 @@ func (p *Provider) buildParams(req core.ModelRequest) (anthropic.MessageNewParam
 			}
 			if content.Role != anthropic.MessageParamRoleAssistant {
 				return params, fmt.Errorf("message %d: assistant content has role %q", i, content.Role)
+			}
+			if m.Model != req.Model {
+				// Another model's signatures, or those of a model no one named, can't be verified here.
+				content.Content = slices.DeleteFunc(content.Content, func(b anthropic.ContentBlockParamUnion) bool {
+					return b.OfThinking != nil || b.OfRedactedThinking != nil
+				})
 			}
 			params.Messages = append(params.Messages, content)
 		case core.RoleUser:

@@ -15,6 +15,7 @@ import (
 	"io/fs"
 	"log"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 
@@ -28,8 +29,10 @@ import (
 // drives it.
 type Agent interface {
 	StartTurn(prompt string) (run func())
+	Steer(text string) error
 	Cancel()
 	Seed(messages []core.Message) error
+	SetModel(model core.Model, name string)
 }
 
 // NewAgent builds the agent for a session, once the client's tools are
@@ -40,6 +43,8 @@ type NewAgent func(clientTools []core.Tool) Agent
 // Transcript and History: wire it as the Agent's, then Serve that Agent.
 type Server struct {
 	mu        sync.Mutex
+	models    Models
+	configMu  sync.Mutex      // one set_config_option or session/close at a time; taken before mu
 	reserved  map[string]bool // names the agent's own tools have; a client tool can't take one
 	conn      *sdk.Connection
 	newAgent  NewAgent
@@ -49,6 +54,7 @@ type Server struct {
 	path      string        // the session's file, set with sessionID
 	saveErr   error         // the first failed write; the session can't be saved after it
 	turns     int           // the last turn number used in the session's file
+	current   choice        // the session's model and effort, from its next turn on
 	turn      *turn         // the running turn, nil when idle
 	writeMu   sync.Mutex    // keeps session/update notifications in Show order
 }
@@ -62,6 +68,7 @@ type turn struct {
 	cancelled bool              // session/cancel arrived
 	discarded bool              // the core discarded the turn
 	reason    string            // why, when discarded
+	done      chan struct{}     // closed when the turn has ended and the prompt is answered
 }
 
 // shown records what the client was shown, after the reply text shown before
@@ -86,10 +93,12 @@ var (
 	_ core.Gate       = (*Server)(nil)
 )
 
-// New is a Server whose agent's own tools are named reserved: a client tool
-// with one of those names, or two with the same, is refused.
-func New(reserved ...string) *Server {
-	s := &Server{reserved: map[string]bool{}}
+// New is a Server whose sessions run on models, and whose agent's own tools
+// are named reserved: a client tool with one of those names, or two with the
+// same, is refused. The agent newAgent builds must start on models' default.
+func New(models Models, reserved ...string) *Server {
+	models.check()
+	s := &Server{models: models, reserved: map[string]bool{}}
 	for _, name := range reserved {
 		s.reserved[name] = true
 	}
@@ -113,10 +122,14 @@ func (s *Server) Serve(newAgent NewAgent, in io.Reader, out io.Writer) error {
 }
 
 func (s *Server) Initialize(context.Context, sdk.InitializeRequest) (sdk.InitializeResponse, error) {
-	// Later slices turn on steering as they are built.
 	return sdk.InitializeResponse{
-		ProtocolVersion:   sdk.ProtocolVersionNumber,
-		AgentCapabilities: sdk.AgentCapabilities{LoadSession: true, McpCapabilities: sdk.McpCapabilities{Acp: true}},
+		Meta:            map[string]any{"steering": map[string]any{"supported": true}},
+		ProtocolVersion: sdk.ProtocolVersionNumber,
+		AgentCapabilities: sdk.AgentCapabilities{
+			LoadSession:         true,
+			McpCapabilities:     sdk.McpCapabilities{Acp: true},
+			SessionCapabilities: sdk.SessionCapabilities{Close: &sdk.SessionCloseCapabilities{}},
+		},
 	}, nil
 }
 
@@ -152,7 +165,9 @@ func (s *Server) NewSession(ctx context.Context, p sdk.NewSessionRequest) (sdk.N
 		return sdk.NewSessionResponse{}, sdk.NewInternalError(map[string]any{"error": "create the session's file: " + err.Error()})
 	}
 	s.agent, s.sessionID, s.path = agent, sdk.SessionId(id), path
-	return sdk.NewSessionResponse{SessionId: s.sessionID}, nil
+	s.turns, s.saveErr = 0, nil
+	s.current = choice{Name: s.models.Default, Effort: s.models.Effort}
+	return sdk.NewSessionResponse{SessionId: s.sessionID, ConfigOptions: s.models.configOptions(s.current)}, nil
 }
 
 // beginStart claims the one session this process has, until endStart: the
@@ -202,17 +217,22 @@ func (s *Server) LoadSession(ctx context.Context, p sdk.LoadSessionRequest) (sdk
 	}
 	s.mu.Lock()
 	saved, path, err := s.restore(agent, id)
+	s.mu.Unlock()
 	if err != nil {
-		s.mu.Unlock()
 		return sdk.LoadSessionResponse{}, err
 	}
-	s.agent, s.sessionID, s.path, s.turns = agent, p.SessionId, path, saved.lastTurn
+	// Outside s.mu, as it may run a key command; the start claimed above keeps
+	// the session from being used meanwhile.
+	current := s.restoreModel(agent, saved.model)
+	s.mu.Lock()
+	s.agent, s.sessionID, s.path, s.turns, s.saveErr = agent, p.SessionId, path, saved.lastTurn, nil
+	s.current = current
 	s.mu.Unlock()
 
 	for _, d := range saved.shown {
 		s.update(d.update())
 	}
-	return sdk.LoadSessionResponse{}, nil
+	return sdk.LoadSessionResponse{ConfigOptions: s.models.configOptions(current)}, nil
 }
 
 // restore reads session id and seeds agent with it. s.mu must be held.
@@ -248,7 +268,9 @@ func (s *Server) save(records ...record) error {
 	return s.saveErr
 }
 
-// Keep saves a kept turn: what it showed, then its messages.
+// Keep saves a kept turn: what it showed, then its messages. A turn the core
+// discarded is kept for its steers alone: they are saved with the messages
+// record marked discarded, and nothing else the turn showed is.
 func (s *Server) Keep(messages []core.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -256,8 +278,36 @@ func (s *Server) Keep(messages []core.Message) {
 		panic("turn kept with no turn running")
 	}
 	s.flushReply()
+	records := s.turn.records
+	if s.turn.discarded {
+		records = slices.DeleteFunc(slices.Clone(records), func(r record) bool { return r.Display.Kind != displaySteer })
+	}
 	// A failure is logged and refuses the next prompt; this turn still ends.
-	_ = s.save(append(s.turn.records, record{Turn: s.turn.n, Messages: messages})...)
+	_ = s.save(append(records, record{Turn: s.turn.n, Messages: messages, Discarded: s.turn.discarded})...)
+}
+
+// Steer holds text for the running turn. A client that sends one with no turn
+// running is told to prompt instead: a steer never starts a turn.
+func (s *Server) Steer(_ context.Context, p steeringRequest) (steeringResponse, error) {
+	text := promptText(p.Prompt)
+	if text == "" {
+		return steeringResponse{}, sdk.NewInvalidParams(map[string]any{"error": "the steer has no text"})
+	}
+	s.mu.Lock()
+	agent := s.agent
+	if s.sessionID == "" || p.SessionId != s.sessionID {
+		s.mu.Unlock()
+		return steeringResponse{}, sdk.NewInvalidParams(map[string]any{"error": "unknown session " + string(p.SessionId)})
+	}
+	s.mu.Unlock()
+	// _meta.steering.idleBehavior is ignored: this always behaves as promptRequired.
+	if err := agent.Steer(text); err != nil {
+		if errors.Is(err, core.ErrNoTurn) {
+			return steeringResponse{Outcome: "promptRequired", Reason: "noRunningTurn"}, nil
+		}
+		return steeringResponse{}, err
+	}
+	return steeringResponse{Outcome: "injected"}, nil
 }
 
 func (s *Server) Prompt(_ context.Context, p sdk.PromptRequest) (sdk.PromptResponse, error) {
@@ -275,7 +325,7 @@ func (s *Server) Prompt(_ context.Context, p sdk.PromptRequest) (sdk.PromptRespo
 		return sdk.PromptResponse{}, sdk.NewInvalidRequest(map[string]any{"error": "a turn is already running"})
 	}
 	s.turns++
-	t := &turn{n: s.turns, summaries: map[string]string{}}
+	t := &turn{n: s.turns, summaries: map[string]string{}, done: make(chan struct{})}
 	// Refused when the session can't be saved: it couldn't be resumed.
 	if err := s.save(record{Turn: t.n, Display: &display{Kind: displayPrompt, Text: text}}); err != nil {
 		s.mu.Unlock()
@@ -292,6 +342,7 @@ func (s *Server) Prompt(_ context.Context, p sdk.PromptRequest) (sdk.PromptRespo
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.turn = nil
+	close(t.done)
 	switch {
 	case t.cancelled:
 		return sdk.PromptResponse{StopReason: sdk.StopReasonCancelled}, nil
@@ -334,6 +385,38 @@ func (s *Server) Cancel(_ context.Context, p sdk.CancelNotification) error {
 	return nil
 }
 
+// CloseSession ends the session, cancelling a running turn and waiting for
+// it to end first. A session that never recorded a turn has its file
+// deleted, so a client that opened one only to read its options leaves
+// nothing behind. The process then has no session until a new or a load.
+func (s *Server) CloseSession(_ context.Context, p sdk.CloseSessionRequest) (sdk.CloseSessionResponse, error) {
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	for {
+		s.mu.Lock()
+		if s.sessionID == "" || p.SessionId != s.sessionID {
+			s.mu.Unlock()
+			return sdk.CloseSessionResponse{}, sdk.NewInvalidParams(map[string]any{"error": "unknown session " + string(p.SessionId)})
+		}
+		t, agent := s.turn, s.agent
+		if t == nil {
+			break // with s.mu held
+		}
+		t.cancelled = true
+		s.mu.Unlock()
+		agent.Cancel()
+		<-t.done // a prompt sent meanwhile may start another turn, so look again
+	}
+	defer s.mu.Unlock()
+	if s.turns == 0 {
+		if err := os.Remove(s.path); err != nil {
+			log.Print("acp: delete the closed session's file: ", err)
+		}
+	}
+	s.agent, s.sessionID, s.path = nil, "", ""
+	return sdk.CloseSessionResponse{}, nil
+}
+
 // Show is called from several goroutines at once while tool calls overlap.
 func (s *Server) Show(agent int, event core.Event) {
 	if agent != 0 {
@@ -371,6 +454,14 @@ func (s *Server) Show(agent int, event core.Event) {
 		s.shown(d)
 		s.mu.Unlock()
 		s.update(d.update())
+	case core.SteerDelivered:
+		// Not sent to the client, which has the message already.
+		s.mu.Lock()
+		if s.turn == nil {
+			panic("steer delivered with no turn running")
+		}
+		s.shown(display{Kind: displaySteer, Text: e.Text})
+		s.mu.Unlock()
 	case core.TurnDiscarded:
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -461,6 +552,8 @@ func (d display) update() sdk.SessionUpdate {
 		return sdk.UpdateUserMessageText(d.Text)
 	case displayReply:
 		return sdk.UpdateAgentMessageText(d.Text)
+	case displaySteer: // replayed as the user's message; live, the client has it
+		return sdk.UpdateUserMessageText(d.Text)
 	case displayToolStart:
 		return sdk.StartToolCall(sdk.ToolCallId(d.ToolID), d.Summary,
 			sdk.WithStartKind(toolKind(d.Name)),

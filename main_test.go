@@ -100,7 +100,11 @@ func TestAnACPAgentOffersTheShellAndNeverTheAgentTool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	agent := acpAgent(model, catalogue, nil, library, t.TempDir(), acp.New())
+	agent := acpAgent(model, "test/model", catalogue, nil, library, t.TempDir(), acp.New(acp.Models{
+		List:    []acp.Model{{Name: "test/model"}},
+		Default: "test/model",
+		Build:   func(string, string) (core.Model, error) { panic("no other model") },
+	}))
 	agent.Transcript, agent.History = discardTranscript{}, nil
 
 	// when

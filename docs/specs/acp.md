@@ -132,6 +132,15 @@ The TUI is unchanged. The protocol lives in a new driving adapter beside it.
   - `session/set_config_option` switches either one, and the response lists
     the new model's efforts.
   - The default is the config's top-level selection.
+  - A switch made during a turn takes effect from the next turn; the running
+    turn finishes on the model it started with.
+  - Each choice in the `model` option carries its model's efforts as
+    `_meta.efforts`, written lowest first; `[]` means the model has no levels.
+    A client can then list every model's efforts without switching to it,
+    which would run its provider's key command.
+  - `session/close` is advertised as `sessionCapabilities.close`. It ends the
+    session and deletes its file if no turn was ever recorded, so clients that
+    open a throwaway session to read the options leave nothing behind.
   - A provider's key command runs the first time one of its models is picked,
     not at startup.
   - Rejected: offering only the selection and `subagents.models`. That list
@@ -193,8 +202,6 @@ The TUI is unchanged. The protocol lives in a new driving adapter beside it.
 
 - Should tool output stream in `tool_call_update`? Slice 3 sends it only at the
   end, as the core's `ToolFinished` carries it.
-- What does a `model` change mid-turn do: apply from the next model call, or be
-  refused until the turn ends?
 ## Out of Scope
 
 - The `agent` tool and children under ACP, including the draft subagents RFD.

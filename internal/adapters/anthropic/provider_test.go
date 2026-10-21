@@ -319,3 +319,49 @@ func TestANonStrictToolIsSentWithoutStrictAndADefaultToolStaysStrict(t *testing.
 		t.Errorf("shell strict = %v, want true", got)
 	}
 }
+
+func TestThinkingFromAnotherModelsMessagesIsDroppedAndItsOwnIsSentSigned(t *testing.T) {
+	// given
+	// ... a request to this model whose history has a response saved before messages named their model,
+	// ... one from another model and one of its own, each with a signed thinking block and text
+	url, bodyRef, _ := serve(t, toolUseSSE)
+	p := New(Config{BaseURL: url, APIKey: "test-key", Model: "m", MaxTokens: 20_000, Thinking: "enabled"})
+	thought := func(sig string) json.RawMessage {
+		return json.RawMessage(`{"role":"assistant","content":[{"type":"thinking","thinking":"hmm","signature":"` + sig + `"},{"type":"redacted_thinking","data":"x"},{"type":"text","text":"ok"}]}`)
+	}
+	req := core.ModelRequest{Model: "anthropic/m", Messages: []core.Message{
+		{Role: core.RoleUser, Text: "one"},
+		{Role: core.RoleAssistant, Content: thought("sig-old")},
+		{Role: core.RoleUser, Text: "two"},
+		{Role: core.RoleAssistant, Content: thought("sig-other"), Model: "other/x"},
+		{Role: core.RoleUser, Text: "three"},
+		{Role: core.RoleAssistant, Content: thought("sig-own"), Model: "anthropic/m"},
+		{Role: core.RoleUser, Text: "four"},
+	}}
+
+	// when
+	// ... the request is streamed
+	_, err := p.Stream(context.Background(), req, func(string) {})
+
+	// then
+	// ... the unnamed and the other model's messages are sent as text alone, and its own as it came
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire wireRequest
+	if err := json.Unmarshal(*bodyRef, &wire); err != nil {
+		t.Fatalf("request body: %v\n%s", err, *bodyRef)
+	}
+	var textOnly, own []map[string]any
+	json.Unmarshal([]byte(`[{"type":"text","text":"ok"}]`), &textOnly)
+	json.Unmarshal([]byte(`[{"type":"thinking","thinking":"hmm","signature":"sig-own"},{"type":"redacted_thinking","data":"x"},{"type":"text","text":"ok"}]`), &own)
+	if got := wire.Messages[1].Content; !reflect.DeepEqual(got, textOnly) {
+		t.Errorf("unnamed model's message = %+v, want %+v", got, textOnly)
+	}
+	if got := wire.Messages[3].Content; !reflect.DeepEqual(got, textOnly) {
+		t.Errorf("other model's message = %+v, want %+v", got, textOnly)
+	}
+	if got := wire.Messages[5].Content; !reflect.DeepEqual(got, own) {
+		t.Errorf("own message = %+v, want %+v", got, own)
+	}
+}

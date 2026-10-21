@@ -3,7 +3,8 @@
 // and effort. See docs/specs/provider-config.md.
 //
 // Everything in the file is validated, not just the selection; a provider's
-// key command is run only when the selection or a subagent entry uses it.
+// key command is run only when the selection or a subagent entry uses it, or
+// later through Keys when one of its models is picked.
 package config
 
 import (
@@ -17,6 +18,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"unicode"
 )
 
@@ -36,8 +38,17 @@ type Selection struct {
 	Effort   string // empty when the model has no effort levels
 
 	// Subagents are the models the config's subagents block allows children
-	// to run on, in the order written. Nil without the block.
+	// to run on, in the order written. Nil without the block. LoadHeadless
+	// leaves their keys empty: an ACP agent has no children.
 	Subagents []SubagentModel
+
+	// Models is every model the config declares, by provider then model
+	// name, for picking one after startup.
+	Models []DeclaredModel
+
+	// Keys resolves a provider's key when one of its models is picked after
+	// startup, without running a key command already run.
+	Keys *Keys
 
 	// SkillDirs are the directories to load skills from, as written: a
 	// leading ~ and relative paths are left to the caller. Earlier wins.
@@ -70,6 +81,47 @@ type SubagentModel struct {
 	Model    string
 	Thinking string
 	Effort   string // empty when the model has no effort levels, or the parent has none to take
+}
+
+// DeclaredModel is one model of one provider, resolved but for its key,
+// which Keys gives.
+type DeclaredModel struct {
+	Provider string
+	Wire     string
+	BaseURL  string
+	Model    string
+	Thinking string
+	Efforts  []string // lowest first, as written; nil when it has no effort levels
+}
+
+// Keys is the process's provider keys. A provider's key command runs the
+// first time its key is asked for, with the stdin Load or LoadHeadless gave
+// it, and its key is kept; a command that fails is run again when asked
+// again. Safe for concurrent use.
+type Keys struct {
+	mu       sync.Mutex
+	stdin    *os.File
+	apiKeys  map[string]string // each provider's apiKey as written
+	resolved map[string]string
+}
+
+// Key is provider's key. provider must be declared.
+func (k *Keys) Key(provider string) (string, error) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if key, ok := k.resolved[provider]; ok {
+		return key, nil
+	}
+	apiKey, ok := k.apiKeys[provider]
+	if !ok {
+		panic(fmt.Sprintf("key of undeclared provider %q", provider))
+	}
+	key, err := resolveKey(apiKey, k.stdin)
+	if err != nil {
+		return "", fmt.Errorf("providers.%s: %w", provider, err)
+	}
+	k.resolved[provider] = key
+	return key, nil
 }
 
 // Web is the resolved web block: the provider in use and its key.
@@ -153,13 +205,16 @@ func DefaultPath() (string, error) {
 
 // Load reads the config. Key commands share the terminal's stdin, so they can
 // prompt.
-func Load(path string) (Selection, error) { return load(path, os.Stdin) }
+func Load(path string) (Selection, error) { return load(path, os.Stdin, true) }
 
-// LoadHeadless is Load for a process whose stdin is not a terminal, such as
-// an ACP agent's protocol stream: key commands get no stdin.
-func LoadHeadless(path string) (Selection, error) { return load(path, nil) }
+// LoadHeadless is Load for an ACP agent, whose stdin is the protocol stream:
+// key commands get no stdin, and their stderr goes into the error when they
+// fail. Only the selected provider's key command runs at startup; the
+// subagents block is validated but its keys are left unresolved, as an ACP
+// agent has no children.
+func LoadHeadless(path string) (Selection, error) { return load(path, nil, false) }
 
-func load(path string, stdin *os.File) (Selection, error) {
+func load(path string, stdin *os.File, subagentKeys bool) (Selection, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Selection{}, fmt.Errorf("read config: %w", err)
@@ -170,14 +225,14 @@ func load(path string, stdin *os.File) (Selection, error) {
 	if err := dec.Decode(&f); err != nil {
 		return Selection{}, fmt.Errorf("%s: %w", path, err)
 	}
-	sel, err := f.resolve(stdin)
+	sel, err := f.resolve(stdin, subagentKeys)
 	if err != nil {
 		return Selection{}, fmt.Errorf("%s: %w", path, err)
 	}
 	return sel, nil
 }
 
-func (f file) resolve(stdin *os.File) (Selection, error) {
+func (f file) resolve(stdin *os.File, subagentKeys bool) (Selection, error) {
 	for _, field := range []struct{ name, value string }{
 		{"provider", f.Provider}, {"model", f.Model}, {"effort", f.Effort},
 	} {
@@ -246,26 +301,32 @@ func (f file) resolve(stdin *os.File) (Selection, error) {
 	}
 	// A provider's key command runs once, however many of the selection and
 	// the subagent entries use it.
-	keys := map[string]string{}
-	providerKey := func(name string) (string, error) {
-		if key, ok := keys[name]; ok {
-			return key, nil
+	keys := &Keys{stdin: stdin, apiKeys: map[string]string{}, resolved: map[string]string{}}
+	var models []DeclaredModel
+	for _, name := range names {
+		keys.apiKeys[name] = f.Providers[name].APIKey
+		modelNames := make([]string, 0, len(f.Providers[name].Models))
+		for m := range f.Providers[name].Models {
+			modelNames = append(modelNames, m)
 		}
-		key, err := resolveKey(f.Providers[name].APIKey, stdin)
-		if err != nil {
-			return "", fmt.Errorf("providers.%s: %w", name, err)
+		sort.Strings(modelNames)
+		for _, m := range modelNames {
+			p, thinking, efforts, err := f.lookup(name, m)
+			if err != nil {
+				panic(err) // both names came from the file
+			}
+			models = append(models, DeclaredModel{Provider: name, Wire: p.Wire, BaseURL: p.BaseURL, Model: m, Thinking: thinking, Efforts: efforts})
 		}
-		keys[name] = key
-		return key, nil
 	}
-	key, err := providerKey(f.Provider)
+	key, err := keys.Key(f.Provider)
 	if err != nil {
 		return Selection{}, err
 	}
 	for i := range subagentModels {
-		subagentModels[i].APIKey, err = providerKey(subagentModels[i].Provider)
-		if err != nil {
-			return Selection{}, err
+		if subagentKeys {
+			if subagentModels[i].APIKey, err = keys.Key(subagentModels[i].Provider); err != nil {
+				return Selection{}, err
+			}
 		}
 	}
 	// Search is optional: without a key the model simply doesn't get the
@@ -317,6 +378,8 @@ func (f file) resolve(stdin *os.File) (Selection, error) {
 		Thinking:  thinking,
 		Effort:    effort,
 		Subagents: subagentModels,
+		Models:    models,
+		Keys:      keys,
 		SkillDirs: f.SkillDirs,
 		Search:    searchSel,
 		SearchOff: searchOff,
@@ -476,20 +539,26 @@ func checkThinking(value string) error {
 }
 
 // resolveKey returns a literal key, or runs a key starting with "!" as a shell
-// command. The command gets stdin (none when nil) so it can prompt; only its
-// stdout is captured.
+// command. The command gets stdin and the terminal's stderr so it can prompt.
+// With no stdin (nil) there is no one to prompt, so its stderr is kept for
+// the error instead.
 func resolveKey(key string, stdin *os.File) (string, error) {
 	command, isCommand := strings.CutPrefix(key, "!")
 	if !isCommand {
 		return key, nil
 	}
 	cmd := exec.Command("/bin/sh", "-c", command)
+	var stderr bytes.Buffer
 	if stdin != nil { // a nil *os.File in the interface would not mean no stdin
-		cmd.Stdin = stdin
+		cmd.Stdin, cmd.Stderr = stdin, os.Stderr
+	} else {
+		cmd.Stderr = &stderr
 	}
-	cmd.Stderr = os.Stderr
 	out, err := cmd.Output()
 	if err != nil {
+		if message := strings.TrimSpace(stderr.String()); message != "" {
+			return "", fmt.Errorf("api key command: %w: %s", err, message)
+		}
 		return "", fmt.Errorf("api key command: %w", err)
 	}
 	key = strings.TrimRightFunc(string(out), unicode.IsSpace)

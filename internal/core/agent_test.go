@@ -166,7 +166,7 @@ func toolCall(id, name, input string) ToolCall {
 func raw(s string) json.RawMessage { return json.RawMessage(strconv.Quote(s)) }
 
 func newAgent(model *mockModel, transcript *mockTranscript, tools ...Tool) *Agent {
-	return &Agent{Model: model, Transcript: transcript, Tools: tools}
+	return &Agent{Model: model, Transcript: transcript, Tools: tools, ModelName: parentModelName}
 }
 
 func lastToolResult(requests [][]Message, call int) ToolResult {
@@ -614,25 +614,27 @@ func TestHistoryIsToldOfEveryMessageTheConversationKeepsAndNoneItDiscards(t *tes
 	a.RunTurn("four")
 
 	// then
-	// ... the history holds, in order, exactly the conversation the last request started with, and the last turn
+	// ... the history holds, in order, exactly the conversation the last request started with, and the last turn,
+	// ... each assistant's message naming the model that wrote it
 	kept := history.kept[:len(history.kept)-2]
 	next := model.requests[len(model.requests)-1]
 	if want := next[:len(next)-1]; !reflect.DeepEqual(kept, want) {
 		t.Errorf("kept = %+v\nwant %+v", kept, want)
 	}
-	if want := []Message{{Role: RoleUser, Text: "four"}, {Role: RoleAssistant, Content: raw("A4")}}; !reflect.DeepEqual(history.kept[len(kept):], want) {
+	if want := []Message{{Role: RoleUser, Text: "four"}, {Role: RoleAssistant, Content: raw("A4"), Model: parentModelName}}; !reflect.DeepEqual(history.kept[len(kept):], want) {
 		t.Errorf("last turn kept = %+v\nwant %+v", history.kept[len(kept):], want)
 	}
 }
 
 func TestAnAgentSeededWithASavedConversationContinuesIt(t *testing.T) {
 	// given
-	// ... an agent seeded with a saved conversation of one turn with a tool call
+	// ... an agent seeded with a saved conversation of one turn with a tool call, its first response
+	// ... saved before messages named their model and its second written by another model
 	saved := []Message{
 		{Role: RoleUser, Text: "one"},
 		{Role: RoleAssistant, Content: raw("A1")},
 		{Role: RoleUser, ToolResults: []ToolResult{{ToolUseID: "toolu_1", Content: "a.txt"}}},
-		{Role: RoleAssistant, Content: raw("A2")},
+		{Role: RoleAssistant, Content: raw("A2"), Model: "other/model"},
 	}
 	model := &mockModel{replies: []mockReply{{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("A3")}}}}
 	a := newAgent(model, &mockTranscript{})
@@ -645,7 +647,7 @@ func TestAnAgentSeededWithASavedConversationContinuesIt(t *testing.T) {
 	a.RunTurn("two")
 
 	// then
-	// ... the model sees the saved conversation and then the new prompt
+	// ... the model sees the saved conversation, each message naming the model it named, and then the new prompt
 	want := append(slices.Clone(saved), Message{Role: RoleUser, Text: "two"})
 	if got := model.requests[0]; !reflect.DeepEqual(got, want) {
 		t.Errorf("request = %+v\nwant %+v", got, want)
@@ -654,8 +656,8 @@ func TestAnAgentSeededWithASavedConversationContinuesIt(t *testing.T) {
 
 func TestSeedingWithMessagesNoTurnCouldHaveKeptFails(t *testing.T) {
 	// given
-	// ... a conversation that ends on the user's message, as no kept turn does
-	saved := []Message{{Role: RoleUser, Text: "one"}}
+	// ... a conversation with an assistant's message that answers another assistant's, as no kept turn has
+	saved := []Message{{Role: RoleUser, Text: "one"}, {Role: RoleAssistant, Content: raw("A1")}, {Role: RoleAssistant, Content: raw("A2")}}
 	a := newAgent(&mockModel{}, &mockTranscript{})
 
 	// when
@@ -669,5 +671,40 @@ func TestSeedingWithMessagesNoTurnCouldHaveKeptFails(t *testing.T) {
 	}
 	if len(a.messages) != 0 {
 		t.Errorf("len(messages) = %d, want 0", len(a.messages))
+	}
+}
+
+func TestAModelSwitchDuringATurnTakesEffectAtTheNextTurn(t *testing.T) {
+	// given
+	// ... an agent on one model whose turn calls a tool, during which the model is switched to another
+	old := &mockModel{replies: []mockReply{
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_1", "list", `{}`)}, Content: raw("A1")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("A2")}},
+	}}
+	next := &mockModel{replies: []mockReply{{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("A3")}}}}
+	var a *Agent
+	switching := &mockTool{name: "list", run: func(context.Context) (string, error) {
+		a.SetModel(next, "other/model")
+		return "a.txt", nil
+	}}
+	a = newAgent(old, &mockTranscript{}, switching)
+
+	// when
+	// ... that turn runs, and then another
+	a.RunTurn("one")
+	a.RunTurn("two")
+
+	// then
+	// ... the first turn ran on the old model to its end, and the second went to the new one by name,
+	// ... carrying the old model's messages under the old model's name
+	if len(old.calls) != 2 || len(next.calls) != 1 {
+		t.Fatalf("calls: old %d, new %d; want 2 and 1", len(old.calls), len(next.calls))
+	}
+	if old.calls[1].Model != parentModelName || next.calls[0].Model != "other/model" {
+		t.Errorf("request models = %q then %q, want %q then %q", old.calls[1].Model, next.calls[0].Model, parentModelName, "other/model")
+	}
+	sent := next.calls[0].Messages
+	if sent[1].Model != parentModelName || sent[3].Model != parentModelName {
+		t.Errorf("messages = %+v, want the assistant's named %q", sent, parentModelName)
 	}
 }

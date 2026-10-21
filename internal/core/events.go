@@ -29,6 +29,11 @@ type TurnDiscarded struct{ Reason string }
 // model receives.
 type SkillLoaded struct{ Name, Content string }
 
+// SteerDelivered reports a steer, a message Agent.Steer held, taken into the
+// conversation as the user's: before the model call that sees it, or, for
+// one still held when its turn is discarded, before TurnDiscarded.
+type SteerDelivered struct{ Text string }
+
 // Lifecycle events: what happens to a child, shown in the transcript of the
 // agent that started it. Child is the child's number.
 
@@ -65,6 +70,7 @@ func (ToolStarted) isEvent()    {}
 func (ToolFinished) isEvent()   {}
 func (TurnDiscarded) isEvent()  {}
 func (SkillLoaded) isEvent()    {}
+func (SteerDelivered) isEvent() {}
 func (ChildWaiting) isEvent()   {}
 func (ChildStarted) isEvent()   {}
 func (ChildProgress) isEvent()  {}

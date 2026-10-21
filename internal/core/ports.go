@@ -44,12 +44,20 @@ type Message struct {
 	Text        string
 	ToolResults []ToolResult
 	Content     json.RawMessage
+	// Model is an assistant message's: the name of the model that wrote it,
+	// as Agent.ModelName. Empty in one saved before messages named it.
+	Model string
 }
 
 type ModelRequest struct {
 	System   string
 	Tools    []ToolSpec
 	Messages []Message
+	// Model is the name of the model the request goes to, as Message.Model
+	// has it. Another model's content, or content of no named model, may carry
+	// what this one can't verify, such as thinking signatures; the model
+	// drops that.
+	Model string
 }
 
 type StopReason int
@@ -96,8 +104,11 @@ type Transcript interface {
 
 // History records the conversation as the agent keeps it. Keep is called on
 // the turn's goroutine when a turn ends and is kept, with that turn's
-// messages in order. A discarded turn is never passed, so what History has
-// been given is always the whole conversation, ready for Agent.Seed.
+// messages in order. A discarded turn's messages are never passed, but for
+// its steers: when it had any, Keep is called after its TurnDiscarded with
+// one user message holding them all, which the next prompt follows. So what
+// History has been given is always the whole conversation, ready for
+// Agent.Seed.
 type History interface {
 	Keep(messages []Message)
 }

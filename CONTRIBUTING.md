@@ -41,7 +41,7 @@ belong with their users.
 
 **Events.** The core reports a turn to `Transcript` as events
 (`internal/core/events.go`): reply started, reply text, tool started, tool
-finished, skill loaded, turn discarded. `Show` takes the number of the agent
+finished, skill loaded, steer delivered, turn discarded. `Show` takes the number of the agent
 the event belongs to beside the event, the parent being 0; the core emits
 through `Agent.show`, which passes it. A child's lifecycle has its own events,
 each naming the child: waiting, started, progress, finished, failed,
@@ -111,6 +111,29 @@ The agent has the TUI's tools and skills, never the `agent` tool, and
 answer, returning once the turn's context is done. Only the client selecting
 `allow` runs a call.
 
+**Models.** `acp.New` takes `acp.Models`: every model the client may pick
+(`provider/model` and its efforts), the default and its effort, and `Build`,
+which builds one at an effort. `main.go` (`acpModels`) lists the config's
+`Selection.Models` and builds through `newModel`, getting the provider's key
+from `Selection.Keys`, which runs a key command the first time its
+provider's key is asked for and keeps the key for the process. A headless
+load runs only the selected provider's at startup. `session/new` and
+`session/load` answer with the `model` and `thought_level` options
+(`models.go`); `session/set_config_option` builds the new choice without
+`s.mu` held, saves it, then calls `Agent.SetModel`. The effort carried to
+another model follows `switchedEffort`, config's subagent rule but taking
+the new model's highest when the old one had no levels; it lives in the
+adapter as config can't be imported. `session/close` cancels and waits for
+a running turn, deletes the file if `turns` is 0, and clears the session.
+
+**Steering.** `_session/steering` (`{sessionId, prompt}`; `_meta` is ignored)
+calls `Agent.Steer` with the prompt's text and answers `{"outcome":"injected"}`,
+or `{"outcome":"promptRequired","reason":"noRunningTurn"}` on `core.ErrNoTurn`;
+empty text or another session is invalid params. `initialize` advertises it as
+`_meta.steering.supported` beside `agentCapabilities`. `SteerDelivered` is
+saved as a `steer` display record in the turn's order and is not sent live,
+since the client has the message.
+
 **Client tools** (`mcp.go`) come from `type: "acp"` entries of `mcpServers`;
 other transports are skipped with a note on stderr. For each, before
 `session/new` or `session/load` answers, the server sends `mcp/connect`
@@ -131,14 +154,19 @@ number and is either a display record, what the client was shown (the
 prompt when the turn starts; then, when the turn is kept, its reply text and
 tool calls in the order they were shown), or the turn's messages from
 `History.Keep`. A turn with no messages record was discarded or never
-finished. Display kinds are `prompt`, `reply`, `tool_start`
+finished. Display kinds are `prompt`, `reply`, `steer` (`text`), `tool_start`
 (`tool_id`, `name`, `summary`, `input`) and `tool_end` (`tool_id`, `text`,
-`failed`). A last line that isn't JSON is a write the process died in:
+`failed`). A discarded turn that had steers is saved too, for them alone:
+`Keep` writes its `steer` records and its messages record (the steers as one
+user message) with `"discarded":true`, and replay shows only that turn's
+steers. A last line that isn't JSON is a write the process died in:
 `readSession` cuts it off the file and loads the rest; a bad line anywhere
-else fails the load. `session/load` takes only an id of the shape
+else fails the load. A model record (`{"model":{"name","effort"}}`, no turn) is appended when the
+client picks a model or effort; `session/load` restores the last one. `session/load` takes only an id of the shape
 `session/new` makes, seeds the agent with every messages record, replays
 the display records of kept turns as `user_message_chunk`,
-`agent_message_chunk`, `tool_call` and `tool_call_update`, and numbers new turns after the file's last. The
+`agent_message_chunk`, `tool_call` and `tool_call_update` (a `steer` record as
+a `user_message_chunk`), and numbers new turns after the file's last. The
 first failed write is logged and makes every later prompt answer an error. Tests drive the adapter
 with the SDK's client side over `io.Pipe`. Spec: `docs/specs/acp.md`.
 
@@ -210,7 +238,7 @@ content is exempt from the 30 KB tool result cap; the adapter caps each
 command's output instead. See `docs/specs/skills.md`.
 
 **Subagents.** The core offers the `agent` tool when `Agent.SubagentTools`
-is set (`ModelName` is then required, for the status line). A call claims a
+is set (`ModelName` names the model in the status line). A call claims a
 child in call order, before the calls run, so numbers follow the order the
 model wrote them and a second call for the same child is answered "busy". A
 child is an `Agent` with its own number and history, the parent's
@@ -248,14 +276,35 @@ parent for the session. See
 stores the SDK's own `MessageParam` as JSON (`json.RawMessage`, thinking
 blocks and signatures intact) and decodes it again for each request; content
 it can't decode fails the call. A `Message` is plain data, so a conversation
-saved with `encoding/json` goes back to the provider as it was.
+saved with `encoding/json` goes back to the provider as it was. Each
+assistant message names the model that wrote it (`Message.Model`, the agent's
+`ModelName`, which is required), and each request names the model it goes to
+(`ModelRequest.Model`). The provider drops thinking blocks from messages whose
+`Model` differs, an empty one (saved before messages named it) included,
+since it can't verify another model's signatures.
+`Agent.SetModel(model, name)` switches the parent's `Model` and `ModelName`
+from the next `StartTurn` on; it may be called while a turn runs, which ends
+on the model it started with.
+
+**Steering.** `Agent.Steer(text)` holds a user message for the running turn
+(from `StartTurn` until it ends; the TUI never steers, and a child can't be
+steered) and returns `ErrNoTurn` when there is none, in one step against the
+turn ending, so a steer is either refused or delivered. The turn takes held
+steers with a tool round's results, or, when they came during the call that
+would end it, as one more round's user message; each is shown as
+`SteerDelivered` when taken. A discarded turn keeps its steers, taken or
+still held, as one user message at the end of the history; the next prompt
+follows it as a user message of its own, and the two are joined into one
+when the model is sent the conversation.
 
 **History.** `Agent.History` (optional; the TUI sets none, and children
 never have one) is given each kept turn's messages, in order, when the turn
-ends. A discarded turn is never passed, so what it holds is always the whole
-conversation, ending with an assistant message. `Agent.Seed` starts an agent
-from such messages before its first turn, and refuses any that don't
-alternate from a user message to an assistant message with content.
+ends, and a discarded turn's steers, as that one user message, after its
+`TurnDiscarded`. Nothing else of a discarded turn is passed, so what it holds
+is always the whole conversation. `Agent.Seed` starts an agent from such
+messages before its first turn, and refuses any where an assistant message
+doesn't follow a user message or has no content, or a user message that
+follows a user message has tool results.
 
 ## Development
 

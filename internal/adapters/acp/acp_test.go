@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"reflect"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -85,6 +88,10 @@ type recordingClient struct {
 	mcp      func(connectionID, method string, params map[string]any) (any, error)
 	connects []string
 	messages []mcpMessage
+
+	// raw receives the agent's answers to requests the SDK's client can't send
+	// (see session.raw): those whose id starts with "raw-".
+	raw chan json.RawMessage
 }
 
 // mcpMessage is an mcp/message the agent sent.
@@ -136,6 +143,10 @@ func (c *recordingClient) serveMcp(fromAgent io.Reader, toClient io.WriteCloser,
 				Method       string         `json:"method"`
 				Params       map[string]any `json:"params"`
 			} `json:"params"`
+		}
+		if json.Unmarshal(line, &msg) == nil && msg.Method == "" && strings.HasPrefix(string(msg.ID), `"raw-`) {
+			c.raw <- line
+			continue
 		}
 		if json.Unmarshal(line, &msg) != nil || msg.Method != sdk.ClientMethodMcpMessage {
 			_, _ = toClient.Write(line)
@@ -198,6 +209,36 @@ type session struct {
 	client *sdk.ClientSideConnection
 	model  *scriptedModel
 	got    *recordingClient
+
+	toAgent io.Writer
+	rawSeq  int
+}
+
+// rawAnswer is the agent's answer to a request sent with session.raw.
+type rawAnswer struct {
+	Result map[string]any `json:"result"`
+	Error  *struct {
+		Code int `json:"code"`
+	} `json:"error"`
+}
+
+// raw sends a request the SDK's client has no method for and waits for the
+// agent's answer.
+func (s *session) raw(t *testing.T, method string, params any) rawAnswer {
+	t.Helper()
+	s.rawSeq++
+	line, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": "raw-" + strconv.Itoa(s.rawSeq), "method": method, "params": params})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.toAgent.Write(append(line, '\n')); err != nil {
+		t.Fatal(err)
+	}
+	var answer rawAnswer
+	if err := json.Unmarshal(await(t, s.got.raw), &answer); err != nil {
+		t.Fatal(err)
+	}
+	return answer
 }
 
 // newSession connects a client to a fresh adapter whose sessions are kept
@@ -223,15 +264,26 @@ func connect(t *testing.T, replies ...modelReply) *session {
 
 func connectTools(t *testing.T, tools []core.Tool, replies ...modelReply) *session {
 	t.Helper()
-	model := &scriptedModel{replies: replies}
+	only := acp.Models{
+		List:    []acp.Model{{Name: "test/model"}},
+		Default: "test/model",
+		Build:   func(string, string) (core.Model, error) { panic("no other model to build") },
+	}
+	return connectWith(t, tools, only, &scriptedModel{replies: replies})
+}
+
+// connectWith connects a client to a fresh adapter offering models, whose
+// core.Agent starts on model, the default.
+func connectWith(t *testing.T, tools []core.Tool, models acp.Models, model *scriptedModel) *session {
+	t.Helper()
 	reserved := []string{core.SkillToolName, core.AgentToolName}
 	for _, tool := range tools {
 		reserved = append(reserved, tool.Spec().Name)
 	}
-	server := acp.New(reserved...)
+	server := acp.New(models, reserved...)
 	newAgent := func(clientTools []core.Tool) acp.Agent {
 		all := append(slices.Clone(tools), clientTools...)
-		return &core.Agent{Model: model, Transcript: server, History: server, Gate: server, Tools: all, System: "system"}
+		return &core.Agent{Model: model, ModelName: models.Default, Transcript: server, History: server, Gate: server, Tools: all, System: "system"}
 	}
 
 	toAgentR, toAgentW := io.Pipe()
@@ -242,7 +294,7 @@ func connectTools(t *testing.T, tools []core.Tool, replies ...modelReply) *sessi
 		defer close(done)
 		_ = server.Serve(newAgent, toAgentR, toClientW)
 	}()
-	got := &recordingClient{}
+	got := &recordingClient{raw: make(chan json.RawMessage, 1)}
 	go got.serveMcp(toClientR, filteredW, toAgentW)
 	client := sdk.NewClientSideConnection(got, toAgentW, filteredR)
 	t.Cleanup(func() {
@@ -250,7 +302,7 @@ func connectTools(t *testing.T, tools []core.Tool, replies ...modelReply) *sessi
 		_ = toClientW.Close()
 		<-done
 	})
-	return &session{client: client, model: model, got: got}
+	return &session{client: client, model: model, got: got, toAgent: toAgentW}
 }
 
 func (s *session) initialize(t *testing.T) sdk.InitializeResponse {
@@ -316,7 +368,7 @@ func await[T any](t *testing.T, ch <-chan T) T {
 	}
 }
 
-func TestInitializeAdvertisesLoadSessionAndMcpOverAcp(t *testing.T) {
+func TestInitializeAdvertisesLoadSessionMcpOverAcpSteeringAndClose(t *testing.T) {
 	// given
 	// ... a client connected to the adapter
 	s := newSession(t)
@@ -326,13 +378,20 @@ func TestInitializeAdvertisesLoadSessionAndMcpOverAcp(t *testing.T) {
 	resp := s.initialize(t)
 
 	// then
-	// ... protocol version 1 with loadSession and MCP-over-ACP, but no steering
+	// ... protocol version 1 with loadSession, MCP-over-ACP and session/close,
+	// ... and steering in the top-level _meta
 	if resp.ProtocolVersion != 1 {
 		t.Errorf("protocolVersion = %d, want 1", resp.ProtocolVersion)
 	}
 	caps := resp.AgentCapabilities
 	if !caps.LoadSession || !caps.McpCapabilities.Acp || caps.McpCapabilities.Http || caps.McpCapabilities.Sse || caps.Meta != nil {
 		t.Errorf("capabilities = %+v, want loadSession and mcpCapabilities.acp only", caps)
+	}
+	if want := (sdk.SessionCapabilities{Close: &sdk.SessionCloseCapabilities{}}); !reflect.DeepEqual(caps.SessionCapabilities, want) {
+		t.Errorf("sessionCapabilities = %+v, want close only", caps.SessionCapabilities)
+	}
+	if want := map[string]any{"steering": map[string]any{"supported": true}}; !reflect.DeepEqual(resp.Meta, want) {
+		t.Errorf("_meta = %v, want %v", resp.Meta, want)
 	}
 }
 

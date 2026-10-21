@@ -351,3 +351,84 @@ func TestAFailedWriteMakesTheNextPromptError(t *testing.T) {
 		t.Errorf("model called %d times, want 1", n)
 	}
 }
+
+func TestCloseOfASessionWithNoTurnsDeletesItsFile(t *testing.T) {
+	// given
+	// ... a session that switched models but never prompted
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	s := connectModels(t, newCatalogue())
+	s.initialize(t)
+	id := s.newSession(t)
+	if _, err := s.set(id, "model", "acme/small"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	// when
+	// ... the client closes it
+	_, err := s.client.CloseSession(context.Background(), sdk.CloseSessionRequest{SessionId: id})
+
+	// then
+	// ... its file is gone
+	if err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(sessionsDir(), string(id)+".jsonl")); !os.IsNotExist(err) {
+		t.Errorf("stat session file: %v, want it not to exist", err)
+	}
+}
+
+func TestCloseOfASessionWithATurnKeepsItsFileAndEndsTheSession(t *testing.T) {
+	// given
+	// ... a session with a kept turn
+	s := newSession(t, modelReply{chunks: []string{"first"}})
+	s.initialize(t)
+	id := s.newSession(t)
+	if _, err := s.client.Prompt(context.Background(), promptOf(id, "one")); err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+
+	// when
+	// ... the client closes it, then prompts
+	_, closeErr := s.client.CloseSession(context.Background(), sdk.CloseSessionRequest{SessionId: id})
+	_, promptErr := s.client.Prompt(context.Background(), promptOf(id, "two"))
+
+	// then
+	// ... the file is kept and the prompt is refused without calling the model
+	if closeErr != nil {
+		t.Fatalf("close: %v", closeErr)
+	}
+	if _, err := os.Stat(filepath.Join(sessionsDir(), string(id)+".jsonl")); err != nil {
+		t.Errorf("stat session file: %v, want it kept", err)
+	}
+	if code := requestCode(t, promptErr); code != -32602 {
+		t.Errorf("prompt code = %d, want -32602", code)
+	}
+	if n := len(s.model.sent()); n != 1 {
+		t.Errorf("model called %d times, want 1", n)
+	}
+}
+
+func TestCloseDuringATurnCancelsItFirst(t *testing.T) {
+	// given
+	// ... a prompt whose model call is in flight
+	began := make(chan struct{})
+	s := newSession(t, modelReply{hold: started(began, nil)})
+	s.initialize(t)
+	id := s.newSession(t)
+	pending := promptAsync(s, id, "hi")
+	await(t, began)
+
+	// when
+	// ... the client closes the session
+	_, err := s.client.CloseSession(context.Background(), sdk.CloseSessionRequest{SessionId: id})
+
+	// then
+	// ... the close succeeded and the prompt answered cancelled
+	if err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	got := await(t, pending)
+	if got.err != nil || got.resp.StopReason != sdk.StopReasonCancelled {
+		t.Errorf("prompt = %+v, %v; want stopReason cancelled", got.resp, got.err)
+	}
+}

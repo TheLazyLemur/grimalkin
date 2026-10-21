@@ -28,8 +28,31 @@ func (s *Server) handle(ctx context.Context, method string, params json.RawMessa
 		return dispatch(ctx, params, func(ctx context.Context, p sdk.CancelNotification) (struct{}, error) {
 			return struct{}{}, s.Cancel(ctx, p)
 		})
+	case sdk.AgentMethodSessionSetConfigOption:
+		return dispatch(ctx, params, s.SetConfigOption)
+	case sdk.AgentMethodSessionClose:
+		return dispatch(ctx, params, s.CloseSession)
+	case methodSteering:
+		return dispatch(ctx, params, s.Steer)
 	}
 	return nil, sdk.NewMethodNotFound(method)
+}
+
+// methodSteering is claude-agent-acp's and codex-acp's mid-turn message.
+const methodSteering = "_session/steering"
+
+// steeringRequest is its params. A _meta, which may say how to behave when
+// idle, is ignored: it isn't decoded.
+type steeringRequest struct {
+	SessionId sdk.SessionId      `json:"sessionId"`
+	Prompt    []sdk.ContentBlock `json:"prompt"`
+}
+
+func (*steeringRequest) Validate() error { return nil }
+
+type steeringResponse struct {
+	Outcome string `json:"outcome"` // "injected" or "promptRequired"
+	Reason  string `json:"reason,omitempty"`
 }
 
 // request is a request's params type, whose pointer validates itself.

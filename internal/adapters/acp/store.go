@@ -16,10 +16,16 @@ import (
 // happened. A turn's display records are what the client was sent; its
 // messages record is written when the core keeps it, so a turn with no
 // messages record was discarded or never finished, and is not replayed.
+// A discarded turn that had steers is kept for them: its messages record is
+// the steers as one user message, marked Discarded, and replay shows only the
+// turn's steer records. A model record, which has no turn, is written when
+// the client picks a model or effort; the last one is restored on load.
 type record struct {
-	Turn     int            `json:"turn"`
-	Display  *display       `json:"display,omitempty"`
-	Messages []core.Message `json:"messages,omitempty"`
+	Turn      int            `json:"turn,omitempty"`
+	Display   *display       `json:"display,omitempty"`
+	Messages  []core.Message `json:"messages,omitempty"`
+	Discarded bool           `json:"discarded,omitempty"` // on a messages record: the turn was discarded
+	Model     *choice        `json:"model,omitempty"`
 }
 
 // display is one thing the client was shown. Text is the prompt's, the
@@ -37,6 +43,7 @@ type display struct {
 const (
 	displayPrompt    = "prompt"
 	displayReply     = "reply"
+	displaySteer     = "steer"
 	displayToolStart = "tool_start"
 	displayToolEnd   = "tool_end"
 )
@@ -84,11 +91,13 @@ func appendRecords(path string, records ...record) error {
 }
 
 // saved is a session as read back: the kept conversation, the display
-// records of its kept turns in order, and the last turn number used.
+// records of its kept turns in order, the last turn number used, and the
+// last model picked (nil when none was).
 type saved struct {
 	messages []core.Message
 	shown    []display
 	lastTurn int
+	model    *choice
 }
 
 // readSession reads a session file. A last line that isn't JSON is a write
@@ -122,7 +131,12 @@ func readSession(path string) (saved, error) {
 			}
 			return saved{}, fmt.Errorf("record %d: %w", n, err)
 		}
-		if (r.Display == nil) == (r.Messages == nil) || r.Turn < 1 {
+		switch {
+		case r.Model != nil:
+			if r.Turn != 0 || r.Display != nil || r.Messages != nil || r.Model.Name == "" {
+				return saved{}, fmt.Errorf("record %d: want a model record to have a name and nothing else", n)
+			}
+		case (r.Display == nil) == (r.Messages == nil) || r.Turn < 1:
 			return saved{}, fmt.Errorf("record %d: want a turn and either display or messages", n)
 		}
 		if err := r.Display.validate(); err != nil {
@@ -132,15 +146,20 @@ func readSession(path string) (saved, error) {
 	}
 	var s saved
 	kept := map[int]bool{}
+	discarded := map[int]bool{}
 	for _, r := range records {
 		s.lastTurn = max(s.lastTurn, r.Turn)
+		if r.Model != nil {
+			s.model = r.Model
+		}
 		if r.Messages != nil {
 			kept[r.Turn] = true
+			discarded[r.Turn] = r.Discarded
 			s.messages = append(s.messages, r.Messages...)
 		}
 	}
 	for _, r := range records {
-		if r.Display != nil && kept[r.Turn] {
+		if r.Display != nil && kept[r.Turn] && (!discarded[r.Turn] || r.Display.Kind == displaySteer) {
 			s.shown = append(s.shown, *r.Display)
 		}
 	}
@@ -154,7 +173,7 @@ func (d *display) validate() error {
 		return nil
 	}
 	switch d.Kind {
-	case displayPrompt, displayReply:
+	case displayPrompt, displayReply, displaySteer:
 	case displayToolStart:
 		if d.ToolID == "" || d.Name == "" {
 			return errors.New("a tool_start has no tool_id or name")

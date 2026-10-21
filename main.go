@@ -104,15 +104,45 @@ func main() {
 // history and gate. It has the same tools and skills as the TUI's, and the
 // client's tools, but not the agent tool or children: SubagentTools stays
 // nil. Every tool call waits on the client's permission through the gate.
-func acpAgent(model core.Model, catalogue, clientTools []core.Tool, library *skills.Library, cwd string, server *acp.Server) *core.Agent {
+func acpAgent(model core.Model, modelName string, catalogue, clientTools []core.Tool, library *skills.Library, cwd string, server *acp.Server) *core.Agent {
 	return &core.Agent{
 		Model:      model,
+		ModelName:  modelName,
 		Transcript: server,
 		History:    server,
 		Gate:       server,
 		System:     core.SystemPrompt(osName(), cwd, library.List()),
 		Tools:      append(slices.Clone(catalogue), clientTools...),
 		Skills:     library,
+	}
+}
+
+// acpModels are the models an ACP session may pick: every model the config
+// declares, starting on the selection. A model's provider's key is resolved
+// when it is first built, with no stdin, as the session's key was at startup.
+func acpModels(sel config.Selection) acp.Models {
+	declared := map[string]config.DeclaredModel{}
+	list := make([]acp.Model, len(sel.Models))
+	for i, m := range sel.Models {
+		name := m.Provider + "/" + m.Model
+		list[i] = acp.Model{Name: name, Efforts: m.Efforts}
+		declared[name] = m
+	}
+	return acp.Models{
+		List:    list,
+		Default: sel.Provider + "/" + sel.Model,
+		Effort:  sel.Effort,
+		Build: func(name, effort string) (core.Model, error) {
+			m, ok := declared[name]
+			if !ok {
+				panic("acp built an undeclared model " + name)
+			}
+			key, err := sel.Keys.Key(m.Provider)
+			if err != nil {
+				return nil, err
+			}
+			return newModel(m.Wire, m.BaseURL, key, m.Model, m.Thinking, effort)
+		},
 	}
 }
 
@@ -133,9 +163,9 @@ func runACP(model core.Model, sel config.Selection, cwd string) error {
 	for _, tool := range catalogue {
 		reserved = append(reserved, tool.Spec().Name)
 	}
-	server := acp.New(reserved...)
+	server := acp.New(acpModels(sel), reserved...)
 	return server.Serve(func(clientTools []core.Tool) acp.Agent {
-		return acpAgent(model, catalogue, clientTools, library, cwd, server)
+		return acpAgent(model, sel.Provider+"/"+sel.Model, catalogue, clientTools, library, cwd, server)
 	}, os.Stdin, os.Stdout)
 }
 
@@ -162,16 +192,17 @@ func run() error {
 	if err != nil {
 		panic(err) // config accepted a wire this file has no adapter for
 	}
-	children, err := subagentModels(sel.Subagents)
-	if err != nil {
-		return fmt.Errorf("%s: %w", path, err)
-	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("get working directory: %w", err)
 	}
+	// Before the subagent models, whose keys a headless load leaves unresolved.
 	if acpMode {
 		return runACP(model, sel, cwd)
+	}
+	children, err := subagentModels(sel.Subagents)
+	if err != nil {
+		return fmt.Errorf("%s: %w", path, err)
 	}
 
 	library, warnings, err := skills.Load(sel.SkillDirs, cwd)

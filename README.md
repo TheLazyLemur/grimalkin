@@ -93,7 +93,9 @@ status bar shows `effort n/a`.
 
 A key command runs once at startup, only for the selected provider and any
 provider a [`subagents`](#subagents) entry names, and can prompt in the
-terminal. grimalkin ignores `ANTHROPIC_*` environment variables.
+terminal. Under [`grimalkin acp`](#acp) only the selected provider's runs at
+startup; another's runs the first time one of its models is picked, once per
+process. grimalkin ignores `ANTHROPIC_*` environment variables.
 
 What to put where:
 
@@ -317,6 +319,11 @@ agent on stdin and stdout instead of the TUI, from the same config. It is
 work in progress: one session per process, and one turn at a time.
 Reply text streams as `agent_message_chunk` updates. `session/cancel` stops a
 turn, and a turn that fails answers `session/prompt` with an error.
+`_session/steering` (as claude-agent-acp and codex-acp have it, advertised in
+`initialize`'s `_meta.steering`) sends a message during a turn: it answers
+`injected`, and the model reads it after the current tool round, or, if the
+turn ends or is cancelled first, with your next prompt. With no turn running
+it answers `promptRequired` and starts nothing.
 
 The model gets the same tools as in the TUI (the shell, and search, web and
 skills when configured) but never the `agent` tool. Each call is announced
@@ -335,14 +342,33 @@ Each session is saved as it goes, to
 `$XDG_STATE_HOME/grimalkin/sessions/<sessionId>.jsonl` (by default
 `~/.local/state/grimalkin/sessions/`), readable by you alone since it holds
 the whole conversation. `session/load` with that id, in a new process,
-replays the session's finished turns (prompts, replies and tool calls) and
+replays the session's finished turns (prompts, replies, tool calls and steers) and
 continues it; a session file whose last line is torn, from a process that
-died mid-write, loads without that line; a cancelled or failed turn is neither replayed nor remembered. If a
+died mid-write, loads without that line; a cancelled or failed turn is neither replayed nor remembered, except for its steers. If a
 write fails, the error goes to stderr and every later prompt is refused, as
-the session could no longer be resumed. The other capabilities are not
-advertised yet. stdout
-carries protocol messages only; errors go to stderr. Key commands still run at startup,
-but with no stdin, so one that prompts fails.
+the session could no longer be resumed.
+
+`session/new` and `session/load` answer with two config options. `model`
+lists every model in the config as `provider/model`, each with its efforts,
+lowest first, in `_meta.efforts` (`[]` when it has none); `thought_level`
+lists the current model's efforts, and is left out when it has none. A
+session starts on the config's `provider`, `model` and `effort`.
+`session/set_config_option` switches either from the next turn on (a running
+turn finishes on its model) and answers with the options as they now are.
+A new model keeps the effort if it lists it, else takes the next higher one
+it lists, going up the old model's `efforts`, else its own highest. The
+first pick of a model on another provider runs that provider's key command;
+if it fails, the answer is an error carrying the command's stderr and the
+session stays where it was. The choice is saved with the session and
+restored by `session/load`; if the saved model is no longer in the config
+or its key command fails, the load goes on with the config's model and says
+why on stderr.
+
+`session/close` (advertised as `sessionCapabilities.close`) cancels a running
+turn and ends the session; a session that never ran a turn has its file
+deleted. The other capabilities are not advertised yet. stdout carries
+protocol messages only; errors go to stderr. Key commands run with no stdin,
+so one that prompts fails, and with their stderr captured for the error.
 
 ## Keys
 
