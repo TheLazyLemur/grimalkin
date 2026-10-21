@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -15,7 +16,8 @@ type Agent struct {
 	Transcript Transcript
 	System     string
 	Tools      []Tool
-	Skills     Skills // optional
+	Skills     Skills  // optional
+	History    History // optional; a child never has one
 
 	// SubagentTools is the tool list of the children this agent starts.
 	// The agent tool is offered only when it is non-nil.
@@ -149,6 +151,9 @@ func (a *Agent) turn(ctx context.Context, text string) (string, error) {
 		switch resp.StopReason {
 		case StopEndTurn:
 			a.unanswered = nil
+			if a.History != nil {
+				a.History.Keep(slices.Clone(a.messages[checkpoint:]))
+			}
 			return reply.String(), nil
 		case StopToolUse:
 			if len(resp.ToolCalls) == 0 {
@@ -166,6 +171,30 @@ func (a *Agent) turn(ctx context.Context, text string) (string, error) {
 		}
 	}
 	return "", a.discardTurn(checkpoint, fmt.Errorf("gave up after %d model calls", maxModelCalls))
+}
+
+// Seed starts the conversation from messages History was given, and must be
+// called before the first turn. It fails, leaving the history empty, unless
+// the messages are turns the agent could have kept: alternating from the
+// user's to an assistant's, which has content.
+func (a *Agent) Seed(messages []Message) error {
+	if len(a.messages) != 0 {
+		panic("agent seeded after a turn")
+	}
+	if len(messages)%2 != 0 {
+		return fmt.Errorf("%d messages: a kept conversation ends with an assistant's", len(messages))
+	}
+	for i, m := range messages {
+		user := i%2 == 0
+		switch {
+		case user && m.Role != RoleUser:
+			return fmt.Errorf("message %d: want the user's", i)
+		case !user && (m.Role != RoleAssistant || len(m.Content) == 0):
+			return fmt.Errorf("message %d: want an assistant's, with content", i)
+		}
+	}
+	a.messages = slices.Clone(messages)
+	return nil
 }
 
 func (a *Agent) checkWiring() {

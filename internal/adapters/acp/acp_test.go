@@ -2,6 +2,7 @@ package acp_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"slices"
@@ -53,7 +54,7 @@ func (m *scriptedModel) Stream(ctx context.Context, req core.ModelRequest, onTex
 	if reply.err != nil {
 		return core.ModelResponse{}, reply.err
 	}
-	return core.ModelResponse{StopReason: core.StopEndTurn, Content: "assistant"}, nil
+	return core.ModelResponse{StopReason: core.StopEndTurn, Content: json.RawMessage(`"assistant"`)}, nil
 }
 
 func (m *scriptedModel) sent() []core.ModelRequest {
@@ -97,11 +98,21 @@ type session struct {
 	got    *recordingClient
 }
 
+// newSession connects a client to a fresh adapter whose sessions are kept
+// in a new state directory.
 func newSession(t *testing.T, replies ...modelReply) *session {
+	t.Helper()
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	return connect(t, replies...)
+}
+
+// connect connects a client to a fresh adapter and core.Agent, as a new
+// process would be, on the state directory the test already set.
+func connect(t *testing.T, replies ...modelReply) *session {
 	t.Helper()
 	model := &scriptedModel{replies: replies}
 	server := acp.New()
-	agent := &core.Agent{Model: model, Transcript: server, System: "system"}
+	agent := &core.Agent{Model: model, Transcript: server, History: server, System: "system"}
 
 	toAgentR, toAgentW := io.Pipe()
 	toClientR, toClientW := io.Pipe()
@@ -183,7 +194,7 @@ func await[T any](t *testing.T, ch <-chan T) T {
 	}
 }
 
-func TestInitializeAdvertisesBaselineOnly(t *testing.T) {
+func TestInitializeAdvertisesLoadSessionOnly(t *testing.T) {
 	// given
 	// ... a client connected to the adapter
 	s := newSession(t)
@@ -193,13 +204,13 @@ func TestInitializeAdvertisesBaselineOnly(t *testing.T) {
 	resp := s.initialize(t)
 
 	// then
-	// ... protocol version 1 with no load, no MCP-over-ACP and no steering
+	// ... protocol version 1 with loadSession, but no MCP-over-ACP and no steering
 	if resp.ProtocolVersion != 1 {
 		t.Errorf("protocolVersion = %d, want 1", resp.ProtocolVersion)
 	}
 	caps := resp.AgentCapabilities
-	if caps.LoadSession || caps.McpCapabilities.Acp || caps.Meta != nil {
-		t.Errorf("capabilities = %+v, want baseline only", caps)
+	if !caps.LoadSession || caps.McpCapabilities.Acp || caps.Meta != nil {
+		t.Errorf("capabilities = %+v, want loadSession only", caps)
 	}
 }
 

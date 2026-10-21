@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -135,9 +137,17 @@ func (m *mockTranscript) last() Event {
 	return m.events[len(m.events)-1]
 }
 
+// mockHistory records the messages of each turn the conversation keeps.
+type mockHistory struct{ kept []Message }
+
+func (m *mockHistory) Keep(messages []Message) { m.kept = append(m.kept, messages...) }
+
 func toolCall(id, name, input string) ToolCall {
 	return ToolCall{ID: id, Name: name, Input: json.RawMessage(input)}
 }
+
+// raw is a model's content as the core holds it: JSON it never reads.
+func raw(s string) json.RawMessage { return json.RawMessage(strconv.Quote(s)) }
 
 func newAgent(model *mockModel, transcript *mockTranscript, tools ...Tool) *Agent {
 	return &Agent{Model: model, Transcript: transcript, Tools: tools}
@@ -152,8 +162,8 @@ func TestAToolCallIsShownRunAndItsResultSentBackToTheModel(t *testing.T) {
 	// given
 	// ... a model that calls a tool once, then ends its turn with streamed text
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_1", "list", `{"dir":"."}`)}, Content: "A1"}},
-		{text: "done", resp: ModelResponse{StopReason: StopEndTurn, Content: "A2"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_1", "list", `{"dir":"."}`)}, Content: raw("A1")}},
+		{text: "done", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("A2")}},
 	}}
 	tool := &mockTool{name: "list", run: returning("a.txt", nil)}
 	transcript := &mockTranscript{}
@@ -190,8 +200,8 @@ func TestAToolErrorGoesBackToTheModelAsAnErrorResult(t *testing.T) {
 	// given
 	// ... a tool that fails
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_1", "list", `{}`)}, Content: "A1"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "A2"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_1", "list", `{}`)}, Content: raw("A1")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("A2")}},
 	}}
 	a := newAgent(model, &mockTranscript{}, &mockTool{name: "list", run: returning("", errors.New("no such dir"))})
 
@@ -211,8 +221,8 @@ func TestAnUnknownToolIsAnsweredWithAnErrorWithoutRunningAnything(t *testing.T) 
 	// given
 	// ... a model that calls a tool that doesn't exist
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_1", "browser", `{}`)}, Content: "A1"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "A2"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_1", "browser", `{}`)}, Content: raw("A1")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("A2")}},
 	}}
 	tool := &mockTool{name: "list", run: returning("", nil)}
 	a := newAgent(model, &mockTranscript{}, tool)
@@ -236,8 +246,8 @@ func TestToolCallsInOneResponseRunAtTheSameTimeAndAnswerInCallOrder(t *testing.T
 	// given
 	// ... a response calling two tools that each wait for the other to start, the first also for the second to end
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_1", "slow", `{}`), toolCall("toolu_2", "quick", `{}`)}, Content: "A1"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "A2"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_1", "slow", `{}`), toolCall("toolu_2", "quick", `{}`)}, Content: raw("A1")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("A2")}},
 	}}
 	slowStarted, quickStarted, quickEnded := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	slow := &mockTool{name: "slow", run: func(context.Context) (string, error) {
@@ -267,7 +277,7 @@ func TestCancellingDuringConcurrentToolCallsStopsThemAllAndDiscardsTheTurn(t *te
 	// given
 	// ... two tools that run until their context is cancelled, and the user cancelling once both are running
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_1", "wait", `{}`), toolCall("toolu_2", "cancel", `{}`)}, Content: "A1"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_1", "wait", `{}`), toolCall("toolu_2", "cancel", `{}`)}, Content: raw("A1")}},
 	}}
 	transcript := &mockTranscript{}
 	a := newAgent(model, transcript)
@@ -310,7 +320,7 @@ func TestCancellingAfterStartTurnButBeforeItRunsDiscardsTheTurn(t *testing.T) {
 	// given
 	// ... a model that fails once its context is cancelled, and a turn started but not yet run
 	model := &mockModel{
-		replies: []mockReply{{resp: ModelResponse{StopReason: StopEndTurn, Content: "A1"}}},
+		replies: []mockReply{{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("A1")}}},
 		hold:    func(ctx context.Context, _ ModelRequest) error { return ctx.Err() },
 	}
 	transcript := &mockTranscript{}
@@ -336,7 +346,7 @@ func TestCancellingWhileIdleDoesNotCancelTheNextTurn(t *testing.T) {
 	// given
 	// ... a model that fails once its context is cancelled, and a cancel with no turn pending
 	model := &mockModel{
-		replies: []mockReply{{resp: ModelResponse{StopReason: StopEndTurn, Content: "A1"}}},
+		replies: []mockReply{{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("A1")}}},
 		hold:    func(ctx context.Context, _ ModelRequest) error { return ctx.Err() },
 	}
 	transcript := &mockTranscript{}
@@ -361,7 +371,7 @@ func TestAPanicInOneOfSeveralToolCallsStopsTheOthersAndPanicsTheTurn(t *testing.
 	// given
 	// ... a tool that panics while another runs until its context is cancelled
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_1", "wait", `{}`), toolCall("toolu_2", "broken", `{}`)}, Content: "A1"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_1", "wait", `{}`), toolCall("toolu_2", "broken", `{}`)}, Content: raw("A1")}},
 	}}
 	waiting := make(chan struct{})
 	stopped := make(chan error, 1)
@@ -394,7 +404,7 @@ func TestAFailedModelCallDiscardsTheTurnFromTheHistory(t *testing.T) {
 	// given
 	// ... a model that runs a tool and then fails on the follow-up call
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_1", "list", `{}`)}, Content: "A1"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_1", "list", `{}`)}, Content: raw("A1")}},
 		{err: errors.New("HTTP 500: overloaded")},
 	}}
 	transcript := &mockTranscript{}
@@ -419,8 +429,8 @@ func TestLongToolOutputIsSentToTheModelTruncatedFromTheFront(t *testing.T) {
 	// ... a tool whose output is larger than the cap and ends with an error line
 	big := strings.Repeat("x", maxToolResultBytes) + "\nFAILED"
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_1", "make", `{}`)}, Content: "A1"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "A2"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_1", "make", `{}`)}, Content: raw("A1")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("A2")}},
 	}}
 	a := newAgent(model, &mockTranscript{}, &mockTool{name: "make", run: returning(big, nil)})
 
@@ -440,7 +450,7 @@ func TestEveryEventOfTheParentsTurnReportsAgentZero(t *testing.T) {
 	// given
 	// ... a turn that loads a skill, streams text, runs a tool and is then stopped by the provider
 	model := &mockModel{replies: []mockReply{
-		{text: "looking", resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_1", "list", `{}`)}, Content: "A1"}},
+		{text: "looking", resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_1", "list", `{}`)}, Content: raw("A1")}},
 		{resp: ModelResponse{StopReason: StopOther, StopDetail: "refusal"}},
 	}}
 	transcript := &mockTranscript{}
@@ -466,5 +476,86 @@ func TestEveryEventOfTheParentsTurnReportsAgentZero(t *testing.T) {
 	}
 	if !slices.Equal(transcript.agents, make([]int, len(wantKinds))) {
 		t.Errorf("agents = %v, want all 0", transcript.agents)
+	}
+}
+
+func TestHistoryIsToldOfEveryMessageTheConversationKeepsAndNoneItDiscards(t *testing.T) {
+	// given
+	// ... a turn kept after a tool call, a turn the provider fails after a tool call, a turn kept, and a fourth turn
+	model := &mockModel{replies: []mockReply{
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_1", "list", `{}`)}, Content: raw("A1")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("A2")}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_2", "list", `{}`)}, Content: raw("B1")}},
+		{err: errors.New("HTTP 500")},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("A3")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("A4")}},
+	}}
+	a := newAgent(model, &mockTranscript{}, &mockTool{name: "list", run: returning("a.txt", nil)})
+	history := &mockHistory{}
+	a.History = history
+
+	// when
+	// ... the four turns run
+	a.RunTurn("one")
+	a.RunTurn("two")
+	a.RunTurn("three")
+	a.RunTurn("four")
+
+	// then
+	// ... the history holds, in order, exactly the conversation the last request started with, and the last turn
+	kept := history.kept[:len(history.kept)-2]
+	next := model.requests[len(model.requests)-1]
+	if want := next[:len(next)-1]; !reflect.DeepEqual(kept, want) {
+		t.Errorf("kept = %+v\nwant %+v", kept, want)
+	}
+	if want := []Message{{Role: RoleUser, Text: "four"}, {Role: RoleAssistant, Content: raw("A4")}}; !reflect.DeepEqual(history.kept[len(kept):], want) {
+		t.Errorf("last turn kept = %+v\nwant %+v", history.kept[len(kept):], want)
+	}
+}
+
+func TestAnAgentSeededWithASavedConversationContinuesIt(t *testing.T) {
+	// given
+	// ... an agent seeded with a saved conversation of one turn with a tool call
+	saved := []Message{
+		{Role: RoleUser, Text: "one"},
+		{Role: RoleAssistant, Content: raw("A1")},
+		{Role: RoleUser, ToolResults: []ToolResult{{ToolUseID: "toolu_1", Content: "a.txt"}}},
+		{Role: RoleAssistant, Content: raw("A2")},
+	}
+	model := &mockModel{replies: []mockReply{{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("A3")}}}}
+	a := newAgent(model, &mockTranscript{})
+	if err := a.Seed(saved); err != nil {
+		t.Fatal(err)
+	}
+
+	// when
+	// ... a turn runs
+	a.RunTurn("two")
+
+	// then
+	// ... the model sees the saved conversation and then the new prompt
+	want := append(slices.Clone(saved), Message{Role: RoleUser, Text: "two"})
+	if got := model.requests[0]; !reflect.DeepEqual(got, want) {
+		t.Errorf("request = %+v\nwant %+v", got, want)
+	}
+}
+
+func TestSeedingWithMessagesNoTurnCouldHaveKeptFails(t *testing.T) {
+	// given
+	// ... a conversation that ends on the user's message, as no kept turn does
+	saved := []Message{{Role: RoleUser, Text: "one"}}
+	a := newAgent(&mockModel{}, &mockTranscript{})
+
+	// when
+	// ... an agent is seeded with it
+	err := a.Seed(saved)
+
+	// then
+	// ... seeding fails and the agent's history stays empty
+	if err == nil {
+		t.Error("err = nil, want one")
+	}
+	if len(a.messages) != 0 {
+		t.Errorf("len(messages) = %d, want 0", len(a.messages))
 	}
 }

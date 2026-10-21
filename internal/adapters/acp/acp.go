@@ -8,9 +8,12 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
+	"os"
 	"strings"
 	"sync"
 
@@ -20,33 +23,41 @@ import (
 )
 
 // Agent is the part of the core this adapter drives, satisfied by
-// *core.Agent. Its Transcript must be the Server that drives it.
+// *core.Agent. Its Transcript and History must be the Server that drives it.
 type Agent interface {
 	StartTurn(prompt string) (run func())
 	Cancel()
+	Seed(messages []core.Message) error
 }
 
 // Server is the ACP agent for one session per process. It is also the core's
-// Transcript: wire it as the Agent's, then Serve that Agent.
+// Transcript and History: wire it as the Agent's, then Serve that Agent.
 type Server struct {
 	mu        sync.Mutex
 	conn      *sdk.AgentSideConnection
 	agent     Agent
-	sessionID sdk.SessionId // empty until session/new
+	sessionID sdk.SessionId // empty until session/new or session/load
+	path      string        // the session's file, set with sessionID
+	saveErr   error         // the first failed write; the session can't be saved after it
+	turns     int           // the last turn number used in the session's file
 	turn      *turn         // the running turn, nil when idle
 	writeMu   sync.Mutex    // keeps session/update notifications in Show order
 }
 
 // turn is what the adapter learns while a turn runs.
 type turn struct {
-	cancelled bool   // session/cancel arrived
-	discarded bool   // the core discarded the turn
-	reason    string // why, when discarded
+	n         int             // its number in the session's file
+	reply     strings.Builder // the reply text shown, saved when the turn is kept
+	cancelled bool            // session/cancel arrived
+	discarded bool            // the core discarded the turn
+	reason    string          // why, when discarded
 }
 
 var (
 	_ sdk.Agent       = (*Server)(nil)
+	_ sdk.AgentLoader = (*Server)(nil)
 	_ core.Transcript = (*Server)(nil)
+	_ core.History    = (*Server)(nil)
 )
 
 func New() *Server { return &Server{} }
@@ -65,9 +76,11 @@ func (s *Server) Serve(agent Agent, in io.Reader, out io.Writer) error {
 }
 
 func (s *Server) Initialize(context.Context, sdk.InitializeRequest) (sdk.InitializeResponse, error) {
-	// Baseline only: later slices turn on loadSession, MCP-over-ACP and
-	// steering as they are built.
-	return sdk.InitializeResponse{ProtocolVersion: sdk.ProtocolVersionNumber}, nil
+	// Later slices turn on MCP-over-ACP and steering as they are built.
+	return sdk.InitializeResponse{
+		ProtocolVersion:   sdk.ProtocolVersionNumber,
+		AgentCapabilities: sdk.AgentCapabilities{LoadSession: true},
+	}, nil
 }
 
 func (s *Server) Authenticate(context.Context, sdk.AuthenticateRequest) (sdk.AuthenticateResponse, error) {
@@ -85,8 +98,100 @@ func (s *Server) NewSession(context.Context, sdk.NewSessionRequest) (sdk.NewSess
 	if _, err := rand.Read(raw[:]); err != nil {
 		panic(err)
 	}
-	s.sessionID = sdk.SessionId(hex.EncodeToString(raw[:]))
+	id := hex.EncodeToString(raw[:])
+	path, err := sessionPath(id)
+	if err == nil {
+		var f *os.File
+		if f, err = os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600); err == nil {
+			err = f.Close()
+		}
+	}
+	if err != nil {
+		return sdk.NewSessionResponse{}, sdk.NewInternalError(map[string]any{"error": "create the session's file: " + err.Error()})
+	}
+	s.sessionID, s.path = sdk.SessionId(id), path
 	return sdk.NewSessionResponse{SessionId: s.sessionID}, nil
+}
+
+// LoadSession seeds the core with a saved session's kept turns and replays
+// what the client was shown of them, then answers.
+func (s *Server) LoadSession(_ context.Context, p sdk.LoadSessionRequest) (sdk.LoadSessionResponse, error) {
+	id := string(p.SessionId)
+	if !sessionIDPattern.MatchString(id) {
+		return sdk.LoadSessionResponse{}, sdk.NewInvalidParams(map[string]any{"error": "not a session id: " + id})
+	}
+	s.mu.Lock()
+	if s.sessionID != "" {
+		s.mu.Unlock()
+		return sdk.LoadSessionResponse{}, sdk.NewInvalidRequest(map[string]any{"error": "this process already has a session"})
+	}
+	saved, path, err := s.restore(id)
+	if err != nil {
+		s.mu.Unlock()
+		return sdk.LoadSessionResponse{}, err
+	}
+	s.sessionID, s.path, s.turns = p.SessionId, path, saved.lastTurn
+	s.mu.Unlock()
+
+	for _, d := range saved.shown {
+		switch d.Kind {
+		case displayPrompt:
+			s.update(sdk.UpdateUserMessageText(d.Text))
+		case displayReply:
+			s.update(sdk.UpdateAgentMessageText(d.Text))
+		default:
+			panic("display kind readSession let through: " + d.Kind)
+		}
+	}
+	return sdk.LoadSessionResponse{}, nil
+}
+
+// restore reads session id and seeds the agent with it. s.mu must be held.
+func (s *Server) restore(id string) (saved, string, error) {
+	path, err := sessionPath(id)
+	if err != nil {
+		return saved{}, "", sdk.NewInternalError(map[string]any{"error": err.Error()})
+	}
+	got, err := readSession(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return saved{}, "", sdk.NewInvalidParams(map[string]any{"error": "unknown session " + id})
+	}
+	if err != nil {
+		return saved{}, "", sdk.NewInternalError(map[string]any{"error": "read session " + id + ": " + err.Error()})
+	}
+	if err := s.agent.Seed(got.messages); err != nil {
+		return saved{}, "", sdk.NewInternalError(map[string]any{"error": "restore session " + id + ": " + err.Error()})
+	}
+	return got, path, nil
+}
+
+// save appends records to the session's file. After a write fails, nothing
+// more is written and every save returns that failure, so the file never
+// has a hole in it. s.mu must be held.
+func (s *Server) save(records ...record) error {
+	if s.saveErr != nil {
+		return s.saveErr
+	}
+	if err := appendRecords(s.path, records...); err != nil {
+		s.saveErr = fmt.Errorf("session %s can't be saved: %w", s.sessionID, err)
+		log.Print("acp: ", s.saveErr)
+	}
+	return s.saveErr
+}
+
+// Keep saves a kept turn: the reply text it showed, then its messages.
+func (s *Server) Keep(messages []core.Message) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.turn == nil {
+		panic("turn kept with no turn running")
+	}
+	var records []record
+	if s.turn.reply.Len() > 0 {
+		records = append(records, record{Turn: s.turn.n, Display: &display{Kind: displayReply, Text: s.turn.reply.String()}})
+	}
+	// A failure is logged and refuses the next prompt; this turn still ends.
+	_ = s.save(append(records, record{Turn: s.turn.n, Messages: messages})...)
 }
 
 func (s *Server) Prompt(_ context.Context, p sdk.PromptRequest) (sdk.PromptResponse, error) {
@@ -103,7 +208,13 @@ func (s *Server) Prompt(_ context.Context, p sdk.PromptRequest) (sdk.PromptRespo
 		s.mu.Unlock()
 		return sdk.PromptResponse{}, sdk.NewInvalidRequest(map[string]any{"error": "a turn is already running"})
 	}
-	t := &turn{}
+	s.turns++
+	t := &turn{n: s.turns}
+	// Refused when the session can't be saved: it couldn't be resumed.
+	if err := s.save(record{Turn: t.n, Display: &display{Kind: displayPrompt, Text: text}}); err != nil {
+		s.mu.Unlock()
+		return sdk.PromptResponse{}, sdk.NewInternalError(map[string]any{"error": err.Error()})
+	}
 	s.turn = t
 	// Started before the lock is released, so a Cancel that sees the turn
 	// finds it cancellable.
@@ -164,6 +275,12 @@ func (s *Server) Show(agent int, event core.Event) {
 	}
 	switch e := event.(type) {
 	case core.ReplyText:
+		s.mu.Lock()
+		if s.turn == nil {
+			panic("reply text with no turn running")
+		}
+		s.turn.reply.WriteString(e.Text)
+		s.mu.Unlock()
 		s.update(sdk.UpdateAgentMessageText(e.Text))
 	case core.TurnDiscarded:
 		s.mu.Lock()

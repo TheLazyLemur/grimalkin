@@ -66,7 +66,7 @@ func TestWithNoModelSkillsThereIsNoCatalogAndNoSkillTool(t *testing.T) {
 	// given
 	// ... a library whose only skill the model may not load
 	skills := &mockSkills{skills: []Skill{{Name: "deploy", Description: "Ship it", UserInvocable: true}}}
-	model := &mockModel{replies: []mockReply{{resp: ModelResponse{StopReason: StopEndTurn, Content: "A1"}}}}
+	model := &mockModel{replies: []mockReply{{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("A1")}}}}
 	a := newAgent(model, &mockTranscript{})
 	a.Skills = skills
 
@@ -118,8 +118,8 @@ func TestTheModelLoadsASkillAndGetsItsRenderedContentUncapped(t *testing.T) {
 	skills := skillLibrary()
 	skills.render = func(name, arguments string) (string, error) { return big, nil }
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{skillCall("toolu_1", "review", "a b")}, Content: "A1"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "A2"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{skillCall("toolu_1", "review", "a b")}, Content: raw("A1")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("A2")}},
 	}}
 	transcript := &mockTranscript{}
 	a := newAgent(model, transcript)
@@ -147,8 +147,8 @@ func TestTheModelCantLoadAUserOnlySkill(t *testing.T) {
 	// ... a model calling the skill tool for a skill only the user may load
 	skills := skillLibrary()
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{skillCall("toolu_1", "deploy", "")}, Content: "A1"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "A2"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{skillCall("toolu_1", "deploy", "")}, Content: raw("A1")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("A2")}},
 	}}
 	a := newAgent(model, &mockTranscript{})
 	a.Skills = skills
@@ -174,8 +174,8 @@ func TestARenderErrorGoesBackToTheModel(t *testing.T) {
 	skills := skillLibrary()
 	skills.render = func(string, string) (string, error) { return "", errors.New("shell command failed") }
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{skillCall("toolu_1", "review", "")}, Content: "A1"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "A2"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{skillCall("toolu_1", "review", "")}, Content: raw("A1")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("A2")}},
 	}}
 	a := newAgent(model, &mockTranscript{})
 	a.Skills = skills
@@ -196,9 +196,9 @@ func TestLoadingTheSameContentAgainGivesANoteInstead(t *testing.T) {
 	// given
 	// ... a model that calls a tool and loads a skill twice in one response, then again with other arguments
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_0", "list", `{}`), skillCall("toolu_1", "review", "x"), skillCall("toolu_2", "review", "x")}, Content: "A1"}},
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{skillCall("toolu_3", "review", "x"), skillCall("toolu_4", "review", "y")}, Content: "A2"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "A3"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_0", "list", `{}`), skillCall("toolu_1", "review", "x"), skillCall("toolu_2", "review", "x")}, Content: raw("A1")}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{skillCall("toolu_3", "review", "x"), skillCall("toolu_4", "review", "y")}, Content: raw("A2")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("A3")}},
 	}}
 	skills := skillLibrary()
 	var renderedBeforeTool []string
@@ -237,10 +237,10 @@ func TestADiscardedTurnTakesItsSkillsWithIt(t *testing.T) {
 	// given
 	// ... a turn that loads a skill and then fails
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{skillCall("toolu_1", "review", "")}, Content: "A1"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{skillCall("toolu_1", "review", "")}, Content: raw("A1")}},
 		{err: errors.New("HTTP 500")},
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{skillCall("toolu_2", "review", "")}, Content: "A2"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "A3"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{skillCall("toolu_2", "review", "")}, Content: raw("A2")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("A3")}},
 	}}
 	a := newAgent(model, &mockTranscript{})
 	a.Skills = skillLibrary()
@@ -261,7 +261,7 @@ func TestTheUserLoadsASkillWithASlashCommand(t *testing.T) {
 	// given
 	// ... a user-only skill and a model that answers
 	skills := skillLibrary()
-	model := &mockModel{replies: []mockReply{{resp: ModelResponse{StopReason: StopEndTurn, Content: "A1"}}}}
+	model := &mockModel{replies: []mockReply{{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("A1")}}}}
 	transcript := &mockTranscript{}
 	a := newAgent(model, transcript)
 	a.Skills = skills
@@ -287,7 +287,7 @@ func TestSlashTextThatIsntAUserSkillIsAnOrdinaryPrompt(t *testing.T) {
 			// given
 			// ... a model that answers
 			skills := skillLibrary()
-			model := &mockModel{replies: []mockReply{{resp: ModelResponse{StopReason: StopEndTurn, Content: "A1"}}}}
+			model := &mockModel{replies: []mockReply{{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("A1")}}}}
 			a := newAgent(model, &mockTranscript{})
 			a.Skills = skills
 

@@ -101,12 +101,14 @@ func main() {
 
 // runACP serves one ACP session on stdin and stdout, with no tools: the
 // permission gate that must stand in front of them is not built yet. stdout
-// carries protocol messages only, so nothing is printed to it here.
+// carries protocol messages only, so nothing is printed to it here. The
+// server saves the session's kept turns as the agent's History.
 func runACP(model core.Model, cwd string) error {
 	server := acp.New()
 	agent := &core.Agent{
 		Model:      model,
 		Transcript: server,
+		History:    server,
 		System:     core.SystemPrompt(osName(), cwd, nil),
 	}
 	return server.Serve(agent, os.Stdin, os.Stdout)

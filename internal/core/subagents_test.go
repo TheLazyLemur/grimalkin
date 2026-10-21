@@ -134,16 +134,16 @@ func sixAgentCalls() mockReply {
 	for i := 1; i <= 6; i++ {
 		calls = append(calls, agentCall(fmt.Sprintf("toolu_%d", i), `{"task":"dig"}`))
 	}
-	return mockReply{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: calls, Content: "P1"}}
+	return mockReply{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: calls, Content: raw("P1")}}
 }
 
 func TestASixthChildWaitsForOneOfFiveSlotsAndResultsComeBackInCallOrder(t *testing.T) {
 	// given
 	// ... a response starting six children, whose model calls are held until the test opens the gate
-	done := mockReply{text: "done", resp: ModelResponse{StopReason: StopEndTurn, Content: "C"}}
+	done := mockReply{text: "done", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C")}}
 	model := &mockModel{replies: []mockReply{
 		sixAgentCalls(), done, done, done, done, done, done,
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "P2"}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P2")}},
 	}}
 	gate := newChildGate()
 	model.hold = gate.hold
@@ -235,9 +235,9 @@ func TestAnAgentCallStartsAFreshChildWithItsOwnPromptTaskAndTools(t *testing.T) 
 	// given
 	// ... a parent with its own tool, a subagent tool list and skills, whose model hands a task to a child
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"find the bug"}`)}, Content: "P1"}},
-		{text: "found it", resp: ModelResponse{StopReason: StopEndTurn, Content: "C1"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "P2"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"find the bug"}`)}, Content: raw("P1")}},
+		{text: "found it", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C1")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P2")}},
 	}}
 	a := newParent(model, &mockTranscript{}, &mockTool{name: "shell", run: returning("", nil)})
 	a.Tools = []Tool{&mockTool{name: "list", run: returning("", nil)}}
@@ -301,10 +301,10 @@ func TestTheParentReceivesTheChildsNumberAndItsFinalReply(t *testing.T) {
 	// given
 	// ... a child that says something, runs a tool and then gives its answer
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"find the bug"}`)}, Content: "P1"}},
-		{text: "looking", resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_c1", "shell", `{}`)}, Content: "C1"}},
-		{text: "found it", resp: ModelResponse{StopReason: StopEndTurn, Content: "C2"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "P2"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"find the bug"}`)}, Content: raw("P1")}},
+		{text: "looking", resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_c1", "shell", `{}`)}, Content: raw("C1")}},
+		{text: "found it", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C2")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P2")}},
 	}}
 	a := newParent(model, &mockTranscript{}, &mockTool{name: "shell", run: returning("", nil)})
 
@@ -325,9 +325,9 @@ func TestAChildsLongReplyIsCutFromTheFrontBelowItsNumber(t *testing.T) {
 	// ... a child whose reply is larger than the tool result cap
 	big := strings.Repeat("x", maxToolResultBytes) + "\nANSWER"
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"find the bug"}`)}, Content: "P1"}},
-		{text: big, resp: ModelResponse{StopReason: StopEndTurn, Content: "C1"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "P2"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"find the bug"}`)}, Content: raw("P1")}},
+		{text: big, resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C1")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P2")}},
 	}}
 	a := newParent(model, &mockTranscript{})
 
@@ -347,11 +347,11 @@ func TestResumingAChildSendsTheTaskAsAFollowUpInItsHistory(t *testing.T) {
 	// given
 	// ... a parent that starts a child and then resumes it by number
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"find the bug"}`)}, Content: "P1"}},
-		{text: "found it", resp: ModelResponse{StopReason: StopEndTurn, Content: "C1"}},
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_2", `{"agent":1,"task":"where?"}`)}, Content: "P2"}},
-		{text: "line 9", resp: ModelResponse{StopReason: StopEndTurn, Content: "C2"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "P3"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"find the bug"}`)}, Content: raw("P1")}},
+		{text: "found it", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C1")}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_2", `{"agent":1,"task":"where?"}`)}, Content: raw("P2")}},
+		{text: "line 9", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C2")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P3")}},
 	}}
 	a := newParent(model, &mockTranscript{})
 
@@ -361,9 +361,9 @@ func TestResumingAChildSendsTheTaskAsAFollowUpInItsHistory(t *testing.T) {
 
 	// then
 	// ... the child's second request is its first turn followed by the new task, and its reply comes back under the same number
-	want := []Message{{Role: RoleUser, Text: "find the bug"}, {Role: RoleAssistant, Content: "C1"}, {Role: RoleUser, Text: "where?"}}
+	want := []Message{{Role: RoleUser, Text: "find the bug"}, {Role: RoleAssistant, Content: raw("C1")}, {Role: RoleUser, Text: "where?"}}
 	if got := model.requests[3]; !slices.EqualFunc(got, want, func(a, b Message) bool {
-		return a.Role == b.Role && a.Text == b.Text && a.Content == b.Content && len(a.ToolResults) == 0
+		return a.Role == b.Role && a.Text == b.Text && string(a.Content) == string(b.Content) && len(a.ToolResults) == 0
 	}) {
 		t.Errorf("child's second request = %+v\nwant %+v", got, want)
 	}
@@ -376,8 +376,8 @@ func TestResumingANumberNoChildHasIsAnErrorResult(t *testing.T) {
 	// given
 	// ... a parent whose model resumes a child that was never started
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"agent":7,"task":"where?"}`)}, Content: "P1"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "P2"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"agent":7,"task":"where?"}`)}, Content: raw("P1")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P2")}},
 	}}
 	a := newParent(model, &mockTranscript{})
 
@@ -399,9 +399,9 @@ func TestResumingARunningChildIsAnErrorResult(t *testing.T) {
 	model := &mockModel{replies: []mockReply{
 		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{
 			agentCall("toolu_1", `{"task":"find the bug"}`), agentCall("toolu_2", `{"agent":1,"task":"where?"}`),
-		}, Content: "P1"}},
-		{text: "found it", resp: ModelResponse{StopReason: StopEndTurn, Content: "C1"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "P2"}},
+		}, Content: raw("P1")}},
+		{text: "found it", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C1")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P2")}},
 	}}
 	a := newParent(model, &mockTranscript{})
 
@@ -424,12 +424,12 @@ func TestAChildsFailedTurnReturnsItsReasonAndLeavesItResumable(t *testing.T) {
 	// given
 	// ... a child whose model call fails after a tool call, and a parent that then resumes it
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"find the bug"}`)}, Content: "P1"}},
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_c1", "shell", `{}`)}, Content: "C1"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"find the bug"}`)}, Content: raw("P1")}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_c1", "shell", `{}`)}, Content: raw("C1")}},
 		{err: errors.New("HTTP 500: overloaded")},
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_2", `{"agent":1,"task":"try again"}`)}, Content: "P2"}},
-		{text: "found it", resp: ModelResponse{StopReason: StopEndTurn, Content: "C2"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "P3"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_2", `{"agent":1,"task":"try again"}`)}, Content: raw("P2")}},
+		{text: "found it", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C2")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P3")}},
 	}}
 	transcript := &mockTranscript{}
 	a := newParent(model, transcript, &mockTool{name: "shell", run: returning("", nil)})
@@ -456,8 +456,8 @@ func TestCancellingTheParentsTurnCancelsItsRunningChildAndDiscardsTheTurn(t *tes
 	// given
 	// ... a child running a tool until its context is cancelled, and the user cancelling the parent meanwhile
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"find the bug"}`)}, Content: "P1"}},
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_c1", "shell", `{}`)}, Content: "C1"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"find the bug"}`)}, Content: raw("P1")}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_c1", "shell", `{}`)}, Content: raw("C1")}},
 	}}
 	transcript := &mockTranscript{}
 	a := newParent(model, transcript)
@@ -496,10 +496,10 @@ func TestAChildsEventsReportItsNumberBetweenItsStartAndEnd(t *testing.T) {
 	// given
 	// ... a child that runs a tool and then answers
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"find the bug"}`)}, Content: "P1"}},
-		{text: "looking", resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_c1", "shell", `{}`)}, Content: "C1"}},
-		{text: "found it", resp: ModelResponse{StopReason: StopEndTurn, Content: "C2"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "P2"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"find the bug"}`)}, Content: raw("P1")}},
+		{text: "looking", resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_c1", "shell", `{}`)}, Content: raw("C1")}},
+		{text: "found it", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C2")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P2")}},
 	}}
 	transcript := &mockTranscript{}
 	a := newParent(model, transcript, &mockTool{name: "shell", run: returning("ok", nil)})
@@ -539,13 +539,13 @@ func TestAResumedChildsTurnHasItsOwnLifecycleCountingToolsFromZero(t *testing.T)
 	// ... a child that runs a tool in its first turn and another when resumed
 	shellCall := func(id string) []ToolCall { return []ToolCall{toolCall(id, "shell", `{}`)} }
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"find the bug"}`)}, Content: "P1"}},
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: shellCall("toolu_c1"), Content: "C1"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "C2"}},
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_2", `{"agent":1,"task":"where?"}`)}, Content: "P2"}},
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: shellCall("toolu_c2"), Content: "C3"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "C4"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "P3"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"find the bug"}`)}, Content: raw("P1")}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: shellCall("toolu_c1"), Content: raw("C1")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C2")}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_2", `{"agent":1,"task":"where?"}`)}, Content: raw("P2")}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: shellCall("toolu_c2"), Content: raw("C3")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C4")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P3")}},
 	}}
 	transcript := &mockTranscript{}
 	a := newParent(model, transcript, &mockTool{name: "shell", run: returning("", nil)})
@@ -568,10 +568,10 @@ func TestChildrenStartedInOneResponseAreNumberedInCallOrder(t *testing.T) {
 	model := &mockModel{replies: []mockReply{
 		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{
 			agentCall("toolu_1", `{"task":"first"}`), agentCall("toolu_2", `{"task":"second"}`),
-		}, Content: "P1"}},
-		{text: "done", resp: ModelResponse{StopReason: StopEndTurn, Content: "C"}},
-		{text: "done", resp: ModelResponse{StopReason: StopEndTurn, Content: "C"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "P2"}},
+		}, Content: raw("P1")}},
+		{text: "done", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C")}},
+		{text: "done", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P2")}},
 	}}
 	a := newParent(model, &mockTranscript{})
 
@@ -607,9 +607,9 @@ func TestCancellingOneChildReturnsAnErrorResultWhileTheParentAndTheOtherChildGoO
 	model := &mockModel{replies: []mockReply{
 		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{
 			agentCall("toolu_1", `{"task":"first"}`), agentCall("toolu_2", `{"task":"second"}`),
-		}, Content: "P1"}},
-		{text: "done", resp: ModelResponse{StopReason: StopEndTurn, Content: "C"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "P2"}},
+		}, Content: raw("P1")}},
+		{text: "done", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P2")}},
 	}}
 	gate := newChildGate()
 	model.hold = gate.hold
@@ -663,13 +663,13 @@ func TestResumingACancelledChildContinuesFromItsHistoryBeforeTheCancelledTurn(t 
 	// given
 	// ... a child that finishes one turn, is cancelled by the user during a tool call in its second, and is resumed again
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"find the bug"}`)}, Content: "P1"}},
-		{text: "found it", resp: ModelResponse{StopReason: StopEndTurn, Content: "C1"}},
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_2", `{"agent":1,"task":"where?"}`)}, Content: "P2"}},
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_c1", "shell", `{}`)}, Content: "C2"}},
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_3", `{"agent":1,"task":"again"}`)}, Content: "P3"}},
-		{text: "line 9", resp: ModelResponse{StopReason: StopEndTurn, Content: "C3"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "P4"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"find the bug"}`)}, Content: raw("P1")}},
+		{text: "found it", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C1")}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_2", `{"agent":1,"task":"where?"}`)}, Content: raw("P2")}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_c1", "shell", `{}`)}, Content: raw("C2")}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_3", `{"agent":1,"task":"again"}`)}, Content: raw("P3")}},
+		{text: "line 9", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C3")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P4")}},
 	}}
 	a := newParent(model, &mockTranscript{})
 	stopped := make(chan error, 1)
@@ -692,9 +692,9 @@ func TestResumingACancelledChildContinuesFromItsHistoryBeforeTheCancelledTurn(t 
 	if got := lastToolResult(model.requests, 4); got != wantResult {
 		t.Errorf("tool result = %+v, want %+v", got, wantResult)
 	}
-	want := []Message{{Role: RoleUser, Text: "find the bug"}, {Role: RoleAssistant, Content: "C1"}, {Role: RoleUser, Text: "again"}}
+	want := []Message{{Role: RoleUser, Text: "find the bug"}, {Role: RoleAssistant, Content: raw("C1")}, {Role: RoleUser, Text: "again"}}
 	if got := model.requests[5]; !slices.EqualFunc(got, want, func(a, b Message) bool {
-		return a.Role == b.Role && a.Text == b.Text && a.Content == b.Content && len(a.ToolResults) == 0
+		return a.Role == b.Role && a.Text == b.Text && string(a.Content) == string(b.Content) && len(a.ToolResults) == 0
 	}) {
 		t.Errorf("child's request after the cancelled turn = %+v\nwant %+v", got, want)
 	}
@@ -706,10 +706,10 @@ func TestResumingACancelledChildContinuesFromItsHistoryBeforeTheCancelledTurn(t 
 func TestCancellingAChildWaitingForASlotReturnsAnErrorResultWithoutStartingIt(t *testing.T) {
 	// given
 	// ... a response starting six children, whose model calls are held until the test opens the gate
-	done := mockReply{text: "done", resp: ModelResponse{StopReason: StopEndTurn, Content: "C"}}
+	done := mockReply{text: "done", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C")}}
 	model := &mockModel{replies: []mockReply{
 		sixAgentCalls(), done, done, done, done, done,
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "P2"}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P2")}},
 	}}
 	gate := newChildGate()
 	model.hold = gate.hold
@@ -758,12 +758,12 @@ func TestCancellingAChildThatIsNotRunningOrANumberNoChildHasDoesNothing(t *testi
 	// given
 	// ... a parent whose one child has finished its turn
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"find the bug"}`)}, Content: "P1"}},
-		{text: "found it", resp: ModelResponse{StopReason: StopEndTurn, Content: "C1"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "P2"}},
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_2", `{"agent":1,"task":"where?"}`)}, Content: "P3"}},
-		{text: "line 9", resp: ModelResponse{StopReason: StopEndTurn, Content: "C2"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "P4"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"find the bug"}`)}, Content: raw("P1")}},
+		{text: "found it", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C1")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P2")}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_2", `{"agent":1,"task":"where?"}`)}, Content: raw("P3")}},
+		{text: "line 9", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C2")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P4")}},
 	}}
 	transcript := &mockTranscript{}
 	a := newParent(model, transcript)
@@ -795,15 +795,15 @@ func TestCancellingAChildThatIsNotRunningOrANumberNoChildHasDoesNothing(t *testi
 // "found it" and leaves two messages in its history.
 func startOneChild() []mockReply {
 	return []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"find the bug"}`)}, Content: "P1"}},
-		{text: "found it", resp: ModelResponse{StopReason: StopEndTurn, Content: "C1"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "P2"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"find the bug"}`)}, Content: raw("P1")}},
+		{text: "found it", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C1")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P2")}},
 	}
 }
 
 func sameMessages(got, want []Message) bool {
 	return slices.EqualFunc(got, want, func(a, b Message) bool {
-		return a.Role == b.Role && a.Text == b.Text && a.Content == b.Content && len(a.ToolResults) == 0
+		return a.Role == b.Role && a.Text == b.Text && string(a.Content) == string(b.Content) && len(a.ToolResults) == 0
 	})
 }
 
@@ -811,8 +811,8 @@ func TestAUserTurnOnAFinishedChildFollowsItsHistoryUnderItsNumberWithItsOwnStatu
 	// given
 	// ... a parent whose child has finished, and a model that answers the user's follow-up after one tool call
 	model := &mockModel{replies: append(startOneChild(),
-		mockReply{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_c1", "shell", `{}`)}, Content: "C2"}},
-		mockReply{text: "line 9", resp: ModelResponse{StopReason: StopEndTurn, Content: "C3"}},
+		mockReply{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_c1", "shell", `{}`)}, Content: raw("C2")}},
+		mockReply{text: "line 9", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C3")}},
 	)}
 	transcript := &mockTranscript{}
 	a := newParent(model, transcript, &mockTool{name: "shell", run: returning("ok", nil)})
@@ -831,7 +831,7 @@ func TestAUserTurnOnAFinishedChildFollowsItsHistoryUnderItsNumberWithItsOwnStatu
 		t.Fatalf("StartChildTurn: %v", err)
 	}
 	request := model.calls[3]
-	want := []Message{{Role: RoleUser, Text: "find the bug"}, {Role: RoleAssistant, Content: "C1"}, {Role: RoleUser, Text: "where?"}}
+	want := []Message{{Role: RoleUser, Text: "find the bug"}, {Role: RoleAssistant, Content: raw("C1")}, {Role: RoleUser, Text: "where?"}}
 	if !sameMessages(model.requests[3], want) {
 		t.Errorf("child's request = %+v\nwant %+v", model.requests[3], want)
 	}
@@ -865,10 +865,10 @@ func TestTheParentResumingAChildSendsTheUsersTurnOnItInItsHistory(t *testing.T) 
 	// given
 	// ... a child the user ran a follow-up turn on after it finished
 	model := &mockModel{replies: append(startOneChild(),
-		mockReply{text: "line 9", resp: ModelResponse{StopReason: StopEndTurn, Content: "C2"}},
-		mockReply{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_2", `{"agent":1,"task":"fix it"}`)}, Content: "P3"}},
-		mockReply{text: "fixed", resp: ModelResponse{StopReason: StopEndTurn, Content: "C3"}},
-		mockReply{resp: ModelResponse{StopReason: StopEndTurn, Content: "P4"}},
+		mockReply{text: "line 9", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C2")}},
+		mockReply{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_2", `{"agent":1,"task":"fix it"}`)}, Content: raw("P3")}},
+		mockReply{text: "fixed", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C3")}},
+		mockReply{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P4")}},
 	)}
 	a := newParent(model, &mockTranscript{})
 	a.RunTurn("go")
@@ -885,8 +885,8 @@ func TestTheParentResumingAChildSendsTheUsersTurnOnItInItsHistory(t *testing.T) 
 		t.Fatalf("StartChildTurn: %v", err)
 	}
 	want := []Message{
-		{Role: RoleUser, Text: "find the bug"}, {Role: RoleAssistant, Content: "C1"},
-		{Role: RoleUser, Text: "where?"}, {Role: RoleAssistant, Content: "C2"},
+		{Role: RoleUser, Text: "find the bug"}, {Role: RoleAssistant, Content: raw("C1")},
+		{Role: RoleUser, Text: "where?"}, {Role: RoleAssistant, Content: raw("C2")},
 		{Role: RoleUser, Text: "fix it"},
 	}
 	if !sameMessages(model.requests[5], want) {
@@ -941,9 +941,9 @@ func TestWhileAUserTurnRunsOnAChildNeitherTheUserNorTheParentCanStartAnother(t *
 	// given
 	// ... a finished child the user runs a turn on, whose model call is held until the gate opens
 	model := &mockModel{replies: append(startOneChild(),
-		mockReply{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_2", `{"agent":1,"task":"fix it"}`)}, Content: "P3"}},
-		mockReply{resp: ModelResponse{StopReason: StopEndTurn, Content: "P4"}},
-		mockReply{text: "line 9", resp: ModelResponse{StopReason: StopEndTurn, Content: "C2"}},
+		mockReply{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_2", `{"agent":1,"task":"fix it"}`)}, Content: raw("P3")}},
+		mockReply{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P4")}},
+		mockReply{text: "line 9", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C2")}},
 	)}
 	a := newParent(model, &mockTranscript{})
 	a.RunTurn("go")
@@ -985,7 +985,7 @@ func TestCancellingAChildDuringAUserTurnDiscardsThatTurnOnly(t *testing.T) {
 	// given
 	// ... a finished child whose next turn calls a tool, during which the user cancels the child
 	model := &mockModel{replies: append(startOneChild(),
-		mockReply{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_c1", "shell", `{}`)}, Content: "C2"}},
+		mockReply{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{toolCall("toolu_c1", "shell", `{}`)}, Content: raw("C2")}},
 	)}
 	transcript := &mockTranscript{}
 	a := newParent(model, transcript)
@@ -1017,7 +1017,7 @@ func TestCancellingAChildDuringAUserTurnDiscardsThatTurnOnly(t *testing.T) {
 	if last := transcript.last(); last != (ChildCancelled{Child: 1}) {
 		t.Errorf("last event = %#v", last)
 	}
-	want := []Message{{Role: RoleUser, Text: "find the bug"}, {Role: RoleAssistant, Content: "C1"}}
+	want := []Message{{Role: RoleUser, Text: "find the bug"}, {Role: RoleAssistant, Content: raw("C1")}}
 	if got := a.children[0].messages; !sameMessages(got, want) {
 		t.Errorf("child's messages = %+v\nwant %+v", got, want)
 	}
@@ -1048,7 +1048,7 @@ func TestAUserTurnThatFailsIsDiscardedWithItsReasonInTheChildsTranscript(t *test
 	if last := transcript.last(); last != (ChildFailed{Child: 1, Reason: "HTTP 500: overloaded"}) {
 		t.Errorf("last event = %#v", last)
 	}
-	want := []Message{{Role: RoleUser, Text: "find the bug"}, {Role: RoleAssistant, Content: "C1"}}
+	want := []Message{{Role: RoleUser, Text: "find the bug"}, {Role: RoleAssistant, Content: raw("C1")}}
 	if got := a.children[0].messages; !sameMessages(got, want) {
 		t.Errorf("child's messages = %+v\nwant %+v", got, want)
 	}
@@ -1057,7 +1057,7 @@ func TestAUserTurnThatFailsIsDiscardedWithItsReasonInTheChildsTranscript(t *test
 func TestAUserTurnWaitsForASlotWhileFiveChildrenAreRunning(t *testing.T) {
 	// given
 	// ... a finished child, and five more the parent starts, whose model calls are held until the gate opens
-	done := mockReply{text: "done", resp: ModelResponse{StopReason: StopEndTurn, Content: "C"}}
+	done := mockReply{text: "done", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C")}}
 	five := sixAgentCalls()
 	five.resp.ToolCalls = five.resp.ToolCalls[:5]
 	model := &mockModel{replies: append(startOneChild(), five, done, done, done, done, done, done, done)}
@@ -1127,7 +1127,7 @@ func withSmallModel(a *Agent, small *mockModel) *Agent {
 func TestWithAllowedModelsTheAgentToolOffersTheParentsModelThenThoseInWiredOrder(t *testing.T) {
 	// given
 	// ... a parent wired with two allowed subagent models
-	model := &mockModel{replies: []mockReply{{resp: ModelResponse{StopReason: StopEndTurn, Content: "P1"}}}}
+	model := &mockModel{replies: []mockReply{{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P1")}}}}
 	a := newParent(model, &mockTranscript{})
 	a.SubagentModels = []SubagentModel{{Name: "zeta/scout", Model: &mockModel{}}, {Name: "alpha/big", Model: &mockModel{}}}
 
@@ -1159,14 +1159,14 @@ func TestAChildStartedOnAnotherModelKeepsItWhenTheParentOrTheUserResumesIt(t *te
 	// given
 	// ... a parent that starts a child on an allowed model and later resumes it by number
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"find the bug","model":"other/small"}`)}, Content: "P1"}},
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_2", `{"agent":1,"task":"where?"}`)}, Content: "P2"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "P3"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"find the bug","model":"other/small"}`)}, Content: raw("P1")}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_2", `{"agent":1,"task":"where?"}`)}, Content: raw("P2")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P3")}},
 	}}
 	small := &mockModel{replies: []mockReply{
-		{text: "found it", resp: ModelResponse{StopReason: StopEndTurn, Content: "C1"}},
-		{text: "line 9", resp: ModelResponse{StopReason: StopEndTurn, Content: "C2"}},
-		{text: "yes", resp: ModelResponse{StopReason: StopEndTurn, Content: "C3"}},
+		{text: "found it", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C1")}},
+		{text: "line 9", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C2")}},
+		{text: "yes", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C3")}},
 	}}
 	transcript := &mockTranscript{}
 	a := withSmallModel(newParent(model, transcript), small)
@@ -1204,13 +1204,13 @@ func TestAChildStartedOnAnotherModelKeepsItWhenTheParentOrTheUserResumesIt(t *te
 func TestACallWithoutAModelOrNamingTheParentsRunsTheChildOnTheParentsModel(t *testing.T) {
 	// given
 	// ... a parent with an allowed model, whose response starts one child with no model and one naming the parent's
-	done := mockReply{text: "done", resp: ModelResponse{StopReason: StopEndTurn, Content: "C"}}
+	done := mockReply{text: "done", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C")}}
 	model := &mockModel{replies: []mockReply{
 		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{
 			agentCall("toolu_1", `{"task":"dig"}`), agentCall("toolu_2", `{"task":"dig","model":"test/model"}`),
-		}, Content: "P1"}},
+		}, Content: raw("P1")}},
 		done, done,
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "P2"}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P2")}},
 	}}
 	small := &mockModel{}
 	transcript := &mockTranscript{}
@@ -1244,10 +1244,10 @@ func TestAChildWaitingForASlotIsShownWithTheModelItWillRunOn(t *testing.T) {
 	for i := 1; i <= 6; i++ {
 		calls = append(calls, agentCall(fmt.Sprintf("toolu_%d", i), `{"task":"dig","model":"other/small"}`))
 	}
-	done := mockReply{text: "done", resp: ModelResponse{StopReason: StopEndTurn, Content: "C"}}
+	done := mockReply{text: "done", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C")}}
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: calls, Content: "P1"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "P2"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: calls, Content: raw("P1")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P2")}},
 	}}
 	small := &mockModel{replies: []mockReply{done, done, done, done, done, done}}
 	gate := newChildGate()
@@ -1284,13 +1284,13 @@ func TestACallResumingWithAModelOrNamingAModelNotAllowedIsAnErrorResultAndStarts
 	// given
 	// ... a parent that starts a child, then resumes it with a model and starts another on a model that is not allowed
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"find the bug"}`)}, Content: "P1"}},
-		{text: "found it", resp: ModelResponse{StopReason: StopEndTurn, Content: "C1"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"find the bug"}`)}, Content: raw("P1")}},
+		{text: "found it", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C1")}},
 		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{
 			agentCall("toolu_2", `{"agent":1,"task":"where?","model":"other/small"}`),
 			agentCall("toolu_3", `{"task":"dig","model":"other/huge"}`),
-		}, Content: "P2"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "P3"}},
+		}, Content: raw("P2")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P3")}},
 	}}
 	small := &mockModel{}
 	transcript := &mockTranscript{}
@@ -1354,7 +1354,7 @@ func forkPlaceholders() []ToolResult {
 func listAndFork() mockReply {
 	return mockReply{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{
 		toolCall("toolu_1", "list", `{}`), agentCall("toolu_2", `{"task":"check it","fork":true}`),
-	}, Content: "P1"}}
+	}, Content: raw("P1")}}
 }
 
 // newForkingParent is a parent with a list tool of its own, a shell for its
@@ -1371,10 +1371,10 @@ func TestAForkStartsFromTheParentsConversationAndLeavesTheParentsAsAFreshChildWo
 	// ... a parent whose response calls a tool and forks a child, and which later resumes the fork
 	model := &mockModel{replies: []mockReply{
 		listAndFork(),
-		{text: "looks fine", resp: ModelResponse{StopReason: StopEndTurn, Content: "F1"}},
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_3", `{"agent":1,"task":"sure?"}`)}, Content: "P2"}},
-		{text: "yes", resp: ModelResponse{StopReason: StopEndTurn, Content: "F2"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "P3"}},
+		{text: "looks fine", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("F1")}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_3", `{"agent":1,"task":"sure?"}`)}, Content: raw("P2")}},
+		{text: "yes", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("F2")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P3")}},
 	}}
 	a := newForkingParent(model, &mockTranscript{})
 
@@ -1392,7 +1392,7 @@ func TestAForkStartsFromTheParentsConversationAndLeavesTheParentsAsAFreshChildWo
 		t.Errorf("fork's tools = %v", got)
 	}
 	// ... its messages are the parent's history with the response being handled, then one message of placeholder results and the task
-	if len(fork.Messages) != 3 || !sameMessages(fork.Messages[:2], []Message{{Role: RoleUser, Text: "go"}, {Role: RoleAssistant, Content: "P1"}}) {
+	if len(fork.Messages) != 3 || !sameMessages(fork.Messages[:2], []Message{{Role: RoleUser, Text: "go"}, {Role: RoleAssistant, Content: raw("P1")}}) {
 		t.Fatalf("fork's messages = %+v", fork.Messages)
 	}
 	if last := fork.Messages[2]; last.Role != RoleUser || last.Text != "check it" || !slices.Equal(last.ToolResults, forkPlaceholders()) {
@@ -1409,7 +1409,7 @@ func TestAForkStartsFromTheParentsConversationAndLeavesTheParentsAsAFreshChildWo
 	if resumed.System != parent.System || !slices.Equal(resumed.Tools, parent.Tools) {
 		t.Errorf("resumed fork's system = %q, tools = %v", resumed.System, toolNames(resumed.Tools))
 	}
-	if got := resumed.Messages; len(got) != 5 || !slices.Equal(got[2].ToolResults, forkPlaceholders()) || !sameMessages(got[3:], []Message{{Role: RoleAssistant, Content: "F1"}, {Role: RoleUser, Text: "sure?"}}) {
+	if got := resumed.Messages; len(got) != 5 || !slices.Equal(got[2].ToolResults, forkPlaceholders()) || !sameMessages(got[3:], []Message{{Role: RoleAssistant, Content: raw("F1")}, {Role: RoleUser, Text: "sure?"}}) {
 		t.Errorf("resumed fork's messages = %+v", got)
 	}
 }
@@ -1420,9 +1420,9 @@ func TestAForkWhoseFirstTurnFailedIsResumedWithThePlaceholderResultsAgain(t *tes
 	model := &mockModel{replies: []mockReply{
 		listAndFork(),
 		{err: errors.New("HTTP 500: overloaded")},
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_3", `{"agent":1,"task":"again"}`)}, Content: "P2"}},
-		{text: "looks fine", resp: ModelResponse{StopReason: StopEndTurn, Content: "F1"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "P3"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_3", `{"agent":1,"task":"again"}`)}, Content: raw("P2")}},
+		{text: "looks fine", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("F1")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P3")}},
 	}}
 	a := newForkingParent(model, &mockTranscript{})
 
@@ -1433,7 +1433,7 @@ func TestAForkWhoseFirstTurnFailedIsResumedWithThePlaceholderResultsAgain(t *tes
 	// then
 	// ... the resumed fork's request answers the copied response's calls again before the follow-up
 	got := model.requests[3]
-	if len(got) != 3 || !sameMessages(got[:2], []Message{{Role: RoleUser, Text: "go"}, {Role: RoleAssistant, Content: "P1"}}) {
+	if len(got) != 3 || !sameMessages(got[:2], []Message{{Role: RoleUser, Text: "go"}, {Role: RoleAssistant, Content: raw("P1")}}) {
 		t.Fatalf("resumed fork's messages = %+v", got)
 	}
 	if last := got[2]; last.Text != "again" || !slices.Equal(last.ToolResults, forkPlaceholders()) {
@@ -1446,9 +1446,9 @@ func TestAForksAgentCallIsAnsweredWithAnErrorAndStartsNothing(t *testing.T) {
 	// ... a fork whose model calls the agent tool it was offered
 	model := &mockModel{replies: []mockReply{
 		listAndFork(),
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_f1", `{"task":"dig"}`)}, Content: "F1"}},
-		{text: "looks fine", resp: ModelResponse{StopReason: StopEndTurn, Content: "F2"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "P2"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_f1", `{"task":"dig"}`)}, Content: raw("F1")}},
+		{text: "looks fine", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("F2")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P2")}},
 	}}
 	transcript := &mockTranscript{}
 	a := newForkingParent(model, transcript)
@@ -1482,13 +1482,13 @@ func TestAForkOnAnotherModelOrOfAnEarlierChildIsAnErrorResultAndStartsNoTurn(t *
 	// given
 	// ... a parent that starts a child, then forks onto an allowed model and forks while resuming that child
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"find the bug"}`)}, Content: "P1"}},
-		{text: "found it", resp: ModelResponse{StopReason: StopEndTurn, Content: "C1"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"find the bug"}`)}, Content: raw("P1")}},
+		{text: "found it", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("C1")}},
 		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{
 			agentCall("toolu_2", `{"task":"check it","fork":true,"model":"other/small"}`),
 			agentCall("toolu_3", `{"agent":1,"task":"check it","fork":true}`),
-		}, Content: "P2"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "P3"}},
+		}, Content: raw("P2")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P3")}},
 	}}
 	small := &mockModel{}
 	transcript := &mockTranscript{}
@@ -1520,9 +1520,9 @@ func TestAForkNamingTheParentsOwnModelStarts(t *testing.T) {
 	// given
 	// ... a parent with an allowed model, whose response forks and names the parent's own model
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"check it","fork":true,"model":"test/model"}`)}, Content: "P1"}},
-		{text: "looks fine", resp: ModelResponse{StopReason: StopEndTurn, Content: "F1"}},
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "P2"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: []ToolCall{agentCall("toolu_1", `{"task":"check it","fork":true,"model":"test/model"}`)}, Content: raw("P1")}},
+		{text: "looks fine", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("F1")}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P2")}},
 	}}
 	a := withSmallModel(newParent(model, &mockTranscript{}), &mockModel{})
 
@@ -1547,11 +1547,11 @@ func TestASixthForkWaitsForASlotAndIsShownLikeAnyChild(t *testing.T) {
 	for i := 1; i <= 6; i++ {
 		calls = append(calls, agentCall(fmt.Sprintf("toolu_%d", i), `{"task":"dig","fork":true}`))
 	}
-	done := mockReply{text: "done", resp: ModelResponse{StopReason: StopEndTurn, Content: "F"}}
+	done := mockReply{text: "done", resp: ModelResponse{StopReason: StopEndTurn, Content: raw("F")}}
 	model := &mockModel{replies: []mockReply{
-		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: calls, Content: "P1"}},
+		{resp: ModelResponse{StopReason: StopToolUse, ToolCalls: calls, Content: raw("P1")}},
 		done, done, done, done, done, done,
-		{resp: ModelResponse{StopReason: StopEndTurn, Content: "P2"}},
+		{resp: ModelResponse{StopReason: StopEndTurn, Content: raw("P2")}},
 	}}
 	gate := newChildGate()
 	gate.isChild = func(req ModelRequest) bool { return req.Messages[len(req.Messages)-1].Text == "dig" }

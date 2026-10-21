@@ -6,10 +6,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/anthropics/anthropic-sdk-go"
 
 	"grimalkin/internal/core"
 )
@@ -79,7 +78,7 @@ func TestAConversationIsEncodedForTheAPIAndAStreamedToolCallDecoded(t *testing.T
 	p := New(Config{BaseURL: url, APIKey: "test-key", Model: "m", MaxTokens: 20_000, Thinking: "enabled", Effort: "high"})
 	req := core.ModelRequest{System: "be brief", Tools: []core.ToolSpec{{Name: "shell", Description: "run a command", InputSchema: `{"type":"object","properties":{"command":{"type":"string"}},"required":["command"],"additionalProperties":false}`}}, Messages: []core.Message{
 		{Role: core.RoleUser, Text: "list files"},
-		{Role: core.RoleAssistant, Content: anthropic.NewAssistantMessage(anthropic.NewTextBlock("ok"))},
+		{Role: core.RoleAssistant, Content: json.RawMessage(`{"role":"assistant","content":[{"type":"text","text":"ok"}]}`)},
 		{Role: core.RoleUser, ToolResults: []core.ToolResult{{ToolUseID: "toolu_0", Content: "a.txt"}}},
 	}}
 	var streamed strings.Builder
@@ -192,7 +191,7 @@ func TestAUserMessageWithToolResultsAndTextSendsTheResultsThenTheTextAndCachesAt
 	p := New(Config{BaseURL: url, APIKey: "test-key", Model: "m", MaxTokens: 20_000, Thinking: "enabled"})
 	req := core.ModelRequest{System: "be brief", Messages: []core.Message{
 		{Role: core.RoleUser, Text: "list files"},
-		{Role: core.RoleAssistant, Content: anthropic.NewAssistantMessage(anthropic.NewTextBlock("ok"))},
+		{Role: core.RoleAssistant, Content: json.RawMessage(`{"role":"assistant","content":[{"type":"text","text":"ok"}]}`)},
 		{Role: core.RoleUser, Text: "check it", ToolResults: []core.ToolResult{{ToolUseID: "toolu_0", Content: "running"}}},
 	}}
 
@@ -218,5 +217,71 @@ func TestAUserMessageWithToolResultsAndTextSendsTheResultsThenTheTextAndCachesAt
 	}
 	if c, _ := text["cache_control"].(map[string]any); text["type"] != "text" || text["text"] != "check it" || c["ttl"] != "1h" {
 		t.Errorf("second block = %+v", text)
+	}
+}
+
+func TestAResponseSavedAsJSONAndLoadedIsSentBackAsItCame(t *testing.T) {
+	// given
+	// ... a response the provider streamed, with a signed thinking block, text and a tool call
+	url, bodyRef, _ := serve(t, strings.Replace(toolUseSSE, `"signature":""`, `"signature":"sig-1"`, 1))
+	p := New(Config{BaseURL: url, APIKey: "test-key", Model: "m", MaxTokens: 20_000, Thinking: "enabled"})
+	prompt := core.Message{Role: core.RoleUser, Text: "list files"}
+	resp, err := p.Stream(context.Background(), core.ModelRequest{Messages: []core.Message{prompt}}, func(string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// when
+	// ... its message is saved with encoding/json, loaded and sent back with the call's result
+	saved, err := json.Marshal(core.Message{Role: core.RoleAssistant, Content: resp.Content})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var loaded core.Message
+	if err := json.Unmarshal(saved, &loaded); err != nil {
+		t.Fatal(err)
+	}
+	results := core.Message{Role: core.RoleUser, ToolResults: []core.ToolResult{{ToolUseID: "toolu_1", Content: "a.txt"}}}
+	_, err = p.Stream(context.Background(), core.ModelRequest{Messages: []core.Message{prompt, loaded, results}}, func(string) {})
+
+	// then
+	// ... the assistant message on the wire is the streamed one, signature included
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire wireRequest
+	if err := json.Unmarshal(*bodyRef, &wire); err != nil {
+		t.Fatalf("request body: %v\n%s", err, *bodyRef)
+	}
+	var want []map[string]any
+	json.Unmarshal([]byte(`[
+		{"type":"thinking","thinking":"Use ls.","signature":"sig-1"},
+		{"type":"text","text":"Listing."},
+		{"type":"tool_use","id":"toolu_1","name":"shell","input":{"command":"ls"}}
+	]`), &want)
+	if m := wire.Messages[1]; m.Role != "assistant" || !reflect.DeepEqual(m.Content, want) {
+		t.Errorf("assistant message = %+v\nwant content %+v", m, want)
+	}
+}
+
+func TestAssistantContentThatIsNotAMessageFailsTheCall(t *testing.T) {
+	// given
+	// ... a saved conversation whose assistant content is not this adapter's
+	url, _, _ := serve(t, toolUseSSE)
+	p := New(Config{BaseURL: url, APIKey: "test-key", Model: "m", MaxTokens: 100, Thinking: "adaptive"})
+	req := core.ModelRequest{Messages: []core.Message{
+		{Role: core.RoleUser, Text: "hi"},
+		{Role: core.RoleAssistant, Content: json.RawMessage(`"hello"`)},
+		{Role: core.RoleUser, Text: "again"},
+	}}
+
+	// when
+	// ... it is streamed
+	_, err := p.Stream(context.Background(), req, func(string) {})
+
+	// then
+	// ... the call fails, naming the message
+	if err == nil || !strings.Contains(err.Error(), "message 1") {
+		t.Errorf("err = %v, want one naming message 1", err)
 	}
 }

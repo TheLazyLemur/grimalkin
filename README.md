@@ -309,7 +309,16 @@ work in progress: one session per process, and one text turn at a time with
 no tools (no shell, search, web or skills) until the permission gate exists.
 Reply text streams as `agent_message_chunk` updates. `session/cancel` stops a
 turn, and a turn that fails answers `session/prompt` with an error.
-`loadSession` and the other capabilities are not advertised yet. stdout
+
+Each session is saved as it goes, to
+`$XDG_STATE_HOME/grimalkin/sessions/<sessionId>.jsonl` (by default
+`~/.local/state/grimalkin/sessions/`), readable by you alone since it holds
+the whole conversation. `session/load` with that id, in a new process,
+replays the session's finished turns (prompt and reply text) and continues
+it; a cancelled or failed turn is neither replayed nor remembered. If a
+write fails, the error goes to stderr and every later prompt is refused, as
+the session could no longer be resumed. The other capabilities are not
+advertised yet. stdout
 carries protocol messages only; errors go to stderr. Key commands still run at startup,
 but with no stdin, so one that prompts fails.
 

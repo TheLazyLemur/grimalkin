@@ -10,7 +10,7 @@ main.go                   composition root: loads config, wires adapters
 internal/config/          loads and validates ~/.config/grimalkin/config.json
 internal/core/            conversation, turn loop, tool rules, events,
                           the skill and agent tools, ports (Model, Tool,
-                          Skills, Transcript)
+                          Skills, Transcript, History)
 internal/adapters/
   anthropic/              outbound: Model port over anthropic-sdk-go
   tools/                  outbound: tools (tools.Shell, tools.Search and
@@ -93,7 +93,20 @@ on the request's goroutine and answers when it returns: `end_turn`, `cancelled` 
 `session/cancel` came in meanwhile, or an error carrying the reason of a
 `TurnDiscarded`. The adapter enforces one turn at a time, since the core has
 no busy guard. `ReplyText` becomes `agent_message_chunk`; other events are
-not shown yet. For now the agent has no tools at all. Tests drive the adapter
+not shown yet. For now the agent has no tools at all.
+
+The server is also the agent's `History`, and saves the session
+(`store.go`) as one JSONL file named by its id under
+`$XDG_STATE_HOME/grimalkin/sessions/` (dir 0700, file 0600), created at
+`session/new` and only ever appended to. Each record carries its turn's
+number and is either a display record, what the client was shown (the
+prompt when the turn starts, the reply text joined when it is kept), or the
+turn's messages from `History.Keep`. A turn with no messages record was
+discarded or never finished. `session/load` takes only an id of the shape
+`session/new` makes, seeds the agent with every messages record, replays
+the display records of kept turns as `user_message_chunk` and
+`agent_message_chunk`, and numbers new turns after the file's last. The
+first failed write is logged and makes every later prompt answer an error. Tests drive the adapter
 with the SDK's client side over `io.Pipe`. Spec: `docs/specs/acp.md`.
 
 **Search.** `tools.Search` lists files with `rg --files` (so `.gitignore`
@@ -199,8 +212,17 @@ parent for the session. See
 `docs/specs/subagents.md`.
 
 **Messages.** Assistant message content is opaque to the core: the provider
-stores the SDK's own `MessageParam` (thinking blocks and signatures intact)
-and gets it back unchanged on the next request.
+stores the SDK's own `MessageParam` as JSON (`json.RawMessage`, thinking
+blocks and signatures intact) and decodes it again for each request; content
+it can't decode fails the call. A `Message` is plain data, so a conversation
+saved with `encoding/json` goes back to the provider as it was.
+
+**History.** `Agent.History` (optional; the TUI sets none, and children
+never have one) is given each kept turn's messages, in order, when the turn
+ends. A discarded turn is never passed, so what it holds is always the whole
+conversation, ending with an assistant message. `Agent.Seed` starts an agent
+from such messages before its first turn, and refuses any that don't
+alternate from a user message to an assistant message with content.
 
 ## Development
 

@@ -35,12 +35,14 @@ type ToolResult struct {
 
 // Message is one message of a conversation. A user message has Text,
 // ToolResults, or both, and then the results come before the text; an
-// assistant message has only Content, the provider's own form of it.
+// assistant message has only Content, the provider's own form of it as JSON.
+// The core never reads Content, and a Message is plain data, so a
+// conversation saved with encoding/json goes back to the provider as it was.
 type Message struct {
 	Role        Role
 	Text        string
 	ToolResults []ToolResult
-	Content     any
+	Content     json.RawMessage
 }
 
 type ModelRequest struct {
@@ -61,7 +63,7 @@ type ModelResponse struct {
 	StopReason StopReason
 	StopDetail string // the provider's own reason, shown when StopReason is StopOther
 	ToolCalls  []ToolCall
-	Content    any
+	Content    json.RawMessage // the provider's, kept as Message.Content
 }
 
 type Model interface {
@@ -80,6 +82,14 @@ type Tool interface {
 // Show is called from several goroutines at once while tool calls overlap.
 type Transcript interface {
 	Show(agent int, event Event)
+}
+
+// History records the conversation as the agent keeps it. Keep is called on
+// the turn's goroutine when a turn ends and is kept, with that turn's
+// messages in order. A discarded turn is never passed, so what History has
+// been given is always the whole conversation, ready for Agent.Seed.
+type History interface {
+	Keep(messages []Message)
 }
 
 // Skill is a skill's catalog entry: what the model and the user can see
